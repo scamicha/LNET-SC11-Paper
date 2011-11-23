@@ -1,0 +1,185 @@
+\documentclass[]{sig-alternate}
+\usepackage{graphicx}
+\usepackage{epstopdf}
+\usepackage{url}
+\renewcommand{\topfraction}{0.85}
+\renewcommand{\textfraction}{0.1}
+
+\conferenceinfo{TeraGrid '10}{August 2-5, 2010, Pittsburgh, PA, USA}
+\CopyrightYear{2010}
+\crdata{978-1-60558-818-6/10/08}
+
+\begin{document}
+
+\title{A Compelling Case for a Centralized Filesystem on the TeraGrid}
+\subtitle{Enhancing  an astrophysical workflow with the Data Capacitor WAN as a test case}
+
+\numberofauthors{5}
+\author{
+\alignauthor Scott Michael\\
+	\affaddr{Indiana University}\\
+	\affaddr{Bloomington, IN 47408}\\
+	\email{scamicha@indiana.edu}
+\alignauthor Stephen Simms\\
+	\affaddr{Indiana University}\\
+	\affaddr{Bloomington, IN 47408}\\
+	\email{ssimms@indiana.edu}
+\alignauthor W. B. Breckenridge III\\
+	\affaddr{Mississippi State University}\\
+	\affaddr{Starkville, MS 39759}\\
+	\email{trey@hpc.msstate.edu}
+	\and
+\alignauthor Roger Smith\\
+	\affaddr{Mississippi State University}\\
+	\affaddr{Starkville, MS 39759}\\
+	\email{roger@hpc.msstate.edu}
+\alignauthor Matthew Link\\
+	\affaddr{Indiana University}\\
+	\affaddr{Bloomington, IN 47408}\\
+	\email{mrlink@indiana.edu}		
+}
+
+\maketitle
+
+\begin{abstract}
+In this article we explore the utility of  a centralized filesystem provided by the TeraGrid to both TeraGrid and non-TeraGrid sites. We highlight several common cases in which such a filesystem would be useful in obtaining scientific insight. We present results from a test case using Indiana University's Data Capacitor over the wide area network as a central filesystem for simulation data generated at multiple TeraGrid sites and analyzed at Mississippi State University. Statistical analysis of the I/O patterns and rates, via detailed trace records generated with VampirTrace, for both the Data Capacitor and a local Lustre filesystem are provided. The benefits of a centralized filesystem and potential hurdles in adopting such a system for both TeraGrid and non-TeraGrid sites are discussed.
+\end{abstract}
+
+\category{H.3.4}{Information Storage and Retrieval}{Systems and Software}[Distributed systems, Performance evaluation (efficiency and effectiveness)]
+\category{J.2}{Physical Sciences and Engineering}[Astronomy]
+
+\terms{Algorithms, Performance}
+
+\keywords{WAN file systems, Lustre, Data Capacitor, TeraGrid, astrophysics}
+\vspace{0.25in}
+\section{Introduction}\label{sec:intro}
+Throughout TeraGrid's history the concept of a global central filesystem accessible from any TeraGrid site has been considered by several different groups. Filesystems which utilize the wide area network (WAN) have been introduced to the TeraGrid by multiple resource providers. In late 2005 the San Diego Supercomputing Center introduced GPFS-WAN \cite{andrews2005}, and subsequently Indiana University (IU) made its Data Capacitor (DC) available via the WAN \cite{dcwan2008}. However due to prohibitively large GPFS licensing costs GPFS-WAN was not a viable solution for adoption across the TeraGrid. And, although the DC has been available to TeraGrid sites since early 2008, it is only mounted at seven of the TeraGrid sites. In addition, it is mounted on a handful of non-TeraGrid resources outside of IU. With plans for another TeraGrid centralized filesystem currently in the works, one should re-examine the case for such a filesystem and determine the most likely uses for it. Ultimately, one would like to answer the questions ``Is such a filesystem really necessary?" and ``What are the immediate scientific benefits of such a system?"  
+
+A typical researcher's workflow involves some combination of the following stages: 1) collection of                simulation or instrument data 2) visualization and/or initial analysis of raw data 3) advanced analysis 4) scientific insight and discovery. In general, one would like to lower the barriers to traverse, and shorten the path to discovery. To achieve this goal, one should address the question: ``What are some use cases in which one or more of these phases must share data between geographically separated centers?"
+
+One case that requires sharing data between different centers is when different phases of a researcher's workflow require different types of resources. Stages in a researcher's workflow may require specialized hardware, which might not be available at all centers. For example, simulations may be designed around large shared memory or accelerator architecture, while analysis may only require a standard compute cluster architecture. In many cases, visualization requires some type of special technology, such as 3D rendering, hyperwall, etc., while the production of the raw data itself may be possible in on a cluster. 
+Phases in the workflow may also use resources in different ways. In many cases the production of simulation data is well suited to batch queuing systems, but other parts of the workflow, visualization in particular, might require interactive work on the part of the researcher. This typically means that the batchable work can be done at remote sites while interactive work requires much lower latency (i.e. local resources).
+
+A centralized file system with seamless access for end users can also help accommodate unforeseen variations in the supply of compute cycles. It can help mitigate a shortfall in compute resources, by allowing users to seamlessly transition to another resource, or can maximize the usefulness of an unforeseen surplus in compute resources. For example, a researcher in an inter-campus research group may find that his collaborator has access to a large supply of cycles local to the collaborator's campus. The researcher can then make his data sets available to the collaborator's local compute resources via a centralized file system eliminating the need to transfer the files from one university or center to another. Such {\it campus bridging}, a key to cyberinfrastructure in the 21\textsuperscript{st} century \cite{nsf2010}, can drastically reduce the complexity a researcher must deal with to carry out his research and thereby shorten his time to results. 
+
+Finally, for scientists dealing with very large data sets it may be impractical or impossible to store a full data set or multiple data sets on the data storage system where the data were produced. Often this means archiving the entire data set and analyzing the data in a piecemeal fashion, pulling bits of it back from the archive at a time. The existence of a large centralized filesystem can eliminate or alleviate this issue.
+
+In this article we explore how a central filesystem, namely the Data Capacitor Wide Area Network filesystem (DC-WAN), can address many of these outstanding issues. By studying the use of the DC-WAN in the workflow of protoplanetary disk research using both TeraGrid and non-Teragrid resources we highlight the potential of campus bridging and the general usefulness of a centralized filesystem.
+The paper is organized as follows: in \S\ref{sec:chymera} we provide a brief description of the application and its use in the study of astrophysical phenomena. This is followed by an outline of the specific use case we have examined in \S\ref{sec:usecase}. In \S\ref{sec:setup} we detail the hardware and software setups of the systems used in our testing. We describe our findings in \S\ref{sec:results} and finally, present our main conclusions in \S\ref{sec:conclusions}.
+
+\section{The CHYMERA Code and Data Storage Requirements}\label{sec:chymera}
+\subsection{The CHYMERA Code}
+The CHYMERA code is used to study protoplanetary disks. The initial question it sought to address with regard to disks, was that of fragmentation; that is, can protoplanetary disks with reasonable physical parameters form gas giant planets via direct fragmentation due to gravitational instabilities (GIs)? 
+The CHYMERA code uses an explicit Eulerian scheme including self-gravity which is second order in both space and time. The evolution is carried out in cylindrical coordinates ($r$,$\phi$,$z$) on an evenly spaced three dimensional grid. The rotation axis of the disk is aligned with the $z$-axis. The disk is treated as having reflection symmetry about the midplane in order to reduce computation time.
+Poisson's equation is solved via Fourier decomposition and cyclic reduction \cite{tohline1980}. Shock heating is modeled via artificial viscosity \cite{pickettphd1995} and cooling can be treated in various ways, including constant cooling and realistic radiative physics.
+
+The CHYMERA workflow consists of two main parts: simulation and analysis. The main CHYMERA code produces simulation data in the form of output files which are then analyzed. Several different types of analyses are performed on the data including visualization, basic statistics, Fourier decomposition, and periodograms. Although CHYMERA itself is written in Fortran parallelized via OpenMP, the analysis routines are written in a variety of languages, (e.g. IDL, Python, C, Fortran, Gnuplot) and parallelized in a variety of ways (e.g. serial, OpenMP, MPI). Another major difference between CHYMERA and the analysis codes used is that the main code must be run on a large shared memory machine ($\gtrsim$128 cores), while the analysis routines can typically be run on standard cluster nodes (4-8 cores). 
+
+\subsection{CHYMERA Data Storage Requirements}
+For any given simulation there are many types of data that are saved for post-analysis. The data which are typically stored are density data, temperature data, velocity data, and data relating to the radiation field and energy gains/losses. Typical simulations have a resolution ($r,\phi,z$) of (512,512,64) for a total of $\sim$17 million resolution elements, and are run 1.5 million time steps. Temperature and density data is saved every 200 time steps. Other data types are saved every 1000 time steps.  
+
+For a typical simulation, temperature and density files are 135MB each. The velocity and energy data, stored every 1000 time steps, are 670MB and 800MB in size, respectively. For a simulation of 1.5 million time steps, the total storage requirement is $\sim$6TB. Since none of the systems on which CHYMERA is run afford users local disk storage of this magnitude, the data must be transfered to a system with a larger capacity. In the past, this has meant transferring the data from small stretches of the simulation to the archive facility associated with the supercomputing resource. After several stretches have accumulated a significant amount of data in the archive, data are then copied to a local system for analysis. This paradigm also requires local storage resources to be large enough to accommodate at least one, but ideally several simulations for comparison. Once the data have been transferred to the local resource and archived locally, they are then removed from the archive at the supercomputing facility. In the particular case of our test data set being analyzed at Mississippi State University (MSU), it should be noted that the temporary data storage systems at both MSU and the site where the data was produced, the Pittsburgh Supercomputing Center and the National Center for Supercomputing Applications, have inadequate capacity to store even a single data set. 
+
+\section {The Use Case}\label{sec:usecase}
+The CHYMERA code has been using the DC-WAN as a production resource since mid-2008. The code is run on several shared memory resources on the TeraGrid and, until recently, analysis was performed on both TeraGrid and non-TeraGrid IU resources. In the case of  the CHYMERA code producing simulation data at the Pittsburgh Supercomputing Center and the National Center for Supercomputing Applications and writing the output data directly to DC-WAN, we have seen data being written faster than on local filesystems \cite{henschel2010}. Since producing the data is only the first stage of the CHYMERA workflow, we were eager to test the utility of the DC-WAN in the analysis stage. Through recent collaboration with MSU, IU researchers have gained access to compute cycles on MSU machines Raptor and Talon. Here we detail the setup and initial testing of production analysis runs on the MSU compute resources.   
+For this paper we tested a typical analysis routine on a data set produced by the CHYMERA code. This routine allows researchers to quantitatively examine the overall amplitudes $A_m$ of the $\sin(m\phi)$ and $\cos(m\phi)$ components of GI activity in terms of a Fourier decomposition of the density in the azimuthal direction. The Fourier components are computed as in \cite{imamura2000} for $m$ values from 1 to LMAX/2 (the upper boundary being chosen to avoid issues with the Nyquist frequency). To enable time domain variations of the components to be studied, the extraction of Fourier components is performed on every density file output by the CHYMERA code.
+
+The test data set is 150 density files from a simulation with dimensions (512,512,64), each file is 135MB in size. In this case each file has 256 Fourier components that need to be extracted. This data set is considered a small sample since a typical simulation will produce $\sim$7500 density files.  The analysis routine is designed to read an input density file and broadcast the density data to all MPI ranks. Each rank then computes the following for its subset of $m$ values: 
+\begin{equation}
+A_{m} =\frac{(a^2_{m}+b^2_{m})^{1/2}}{\pi\int\rho_0 r dr dz},
+\end{equation}
+where
+\begin{equation}
+a_m = \int \rho \cos (m\phi) r dr dz d\phi
+\end{equation}
+and
+\begin{equation}
+b_m = \int \rho \sin (m\phi) r dr dz d\phi .
+\end{equation}
+Here $\rho_0$ is the axisymmetric component of the density, and the integrals extend over the computational grid. Each file is read with a default Fortran read statement (i.e. a series of 2MB block reads are issued by the LIBC subsystem). 
+
+We mounted the DC-WAN on Raptor at MSU and performed the analysis test runs on data residing on both the DC-WAN and the local Lustre system at MSU. In both cases the test data was singly striped (i.e., written to a single logical unit number). The analysis of the runs was performed using VampirTrace 5.8 and the OTF tools included in the VampirTrace suite. Using the {\tt otfdump} tool we were able to examine individual read commands issued to the underlying LIBC subsystem. The outcome of these tests is detailed in \S\ref{sec:results}.  
+
+\begin{figure}[t]
+\centering
+\epsfig{file=../Figures/msu_to_iu.eps,width=3.5in}
+\caption{A detailed view of each of the hops for traffic traveling from MSU's Raptor to the DC-WAN. The route used was symmetric so the DC-WAN to Raptor traffic follows the reverse path.}
+\label{fig:network}
+\end{figure} 
+
+\section{System Setup}\label{sec:setup}
+The systems used for testing are composed of three main parts, the compute resource, the network, and the data storage resource, which are described below for both the DC-WAN and MSU local Lustre setups.
+
+\subsection{Compute Resource}
+In both cases the compute system used to perform the analysis is a part of the Raptor cluster at MSU. A section of Raptor (32 nodes) was dedicated to the testing.   Each Raptor node is a Sun Microsystems X2200 M2 server, with two dual core AMD Opteron 2218 processors (2.6GHz) and 8GB of memory.  The nodes are diskless and connected via gigabit Ethernet to a Force 10 S50 switch.  This switch is connected to a Force10 S2410 switch, which serves the entire Raptor cluster, and then into the MSU network backbone.
+
+\begin{figure*}[t]
+\centering
+\epsfig{file=../Figures/combhist.eps,width=6.5in,}
+\caption{Histograms of average read rates for the 150 files read in each of the test runs. The DC-WAN test run is shown on the left and the MSU local Lustre test run is shown on the right. A scaled normal distribution is plotted for each of the runs in a dashed line.}
+\label{fig:hist}
+\end{figure*}
+
+\subsection{Network}
+At MSU the local Lustre storage resource connected to the Raptor cluster via MSU internal networking, see \S\ref{sec:hardware} for more details.
+In the case where the data reside on the DC-WAN the network is more complex. 
+IU and MSU are connected through three major research network providers: the Indiana Gigapop (ING), National LambdaRail (NLR), and Southern Crossroads (SoX).  The Indiana University Research Network leverages high density 10GigE enabled switches  to provide connectivity to the ING.  The ING provides a 10GigE circuit between Indianapolis and Chicago, where upstream connectivity is provided by NLR.  Mississippi State University utilizes a newly constructed 10GigE circuit to SoX.  Southern Crossroads, like the ING, employs connectivity to NLR's IP packet network and takes advantage of existing national connectivity, completing the link from IU to MSU. The bandwidth delay product  for a 1 Gbit/s connection across the 35.5 ms round trip time separating IU
+and MSU is 4.5MB. See Figure \ref{fig:network} for a detailed view of the actual path from Raptor to the DC-WAN.
+
+\subsection{Lustre Hardware and Configuration}
+\subsubsection{Hardware}\label{sec:hardware}
+The MSU local Lustre storage resource consists of six Sun Microsystems X2200 M2 servers, each with two dual core AMD Opteron 2218 processors (2.6GHz) and 8GB of memory.  One node serves as the Metadata Server (MDS), with the other five nodes serving as Object Storage Servers (OSSs). Each node has two disks, a 250GB SATA drive for the operating system, and a secondary 500GB SATA drive dedicated to Lustre, with one Object Storage Target (OST) per system.  All six systems are connected via gigabit Ethernet to six different Force10 S50 switches.  These switches are connected via 10GigE to a Force10 S2410 switch, which is shared with the other Raptor nodes. 
+
+Indiana University's Data Capacitor, funded by the National
+Science Foundation's MRI program, provides an aggregate of 946 TB of high
+performance, high availability short to mid-term storage for very
+large data sets using the open source Lustre filesystem. The DC is divided into four separate systems. The production system is connected to IU's Teragrid resources and local supercomputing resources and has a 361 TB capacity. Two other systems are connected to multiple test clients that are used to explore further uses for the Lustre file system and comprise a total of 224 TB. Finally, the DC-WAN system has a capacity of 361 TB; and is mounted on IU's Teragrid resources, local supercomputing resources, several local departmental resources, and supercomputing resources at seven other Teragrid sites. The DC-WAN system is composed of six Dell 2950 servers with two dual-core 3.0 GHz Xeon processors and 8 GB of RAM.
+Two servers are used as MDSs, configured as a failover pair, and the remaining four are used as
+OSSs, each equipped with a dual port QLogic Fibre Channel card and a
+Myri-10G card in Ethernet mode. 
+
+Data Direct Networks (DDN) provides the storage backend for the
+Data Capacitor. Both MDSs are directly attached to a
+DDN EF2915 Fibre Channel storage array. A single DDN S2A9550 storage
+couplet fronts 361 TB usable SATA disk and is attached to the OSSs via 4 Gb Fibre Channel. The DDN controllers are configured to serve twelve 4TB logical units to each OSS, which
+function as Lustre OSTs.
+
+\subsubsection{Software Configuration}
+All of the MSU Lustre servers were running SuSE SLES 10 SP2 with a 2.6.16 kernel patched for Lustre, using Lustre version 1.8.2. Standard TCP tuning was performed on both the Lustre servers and Raptor clients with {\tt tcp\_rmem} and {\tt tcp\_wmem} set to 16MB, TCP congestion control was set to the {\tt bic} algorithm.
+All of the DC-WAN servers were running RHEL 5.4 with a 2.6.18 kernel patched for Lustre, using Lustre version 1.8.1.1. The maximum values for {\tt tcp\_rmem} and {\tt tcp\_wmem} were set to 32MB on the servers. These TCP buffer sizes are intentionally larger than the client buffers due to DC-WAN serving other clients that have a greater bandwidth delay product than MSU. TCP congestion control was set to the {\tt bic} algorithm.  Lustre's {\tt max\_rpcs\_in\_flight} parameter has been shown to have a significant
+effect on performance across the WAN \cite{simms2007}. However, to control the number of variables, for these tests we chose to leave {\tt max\_rpcs\_in\_flight} at the default value of 8 on all of the systems.
+
+\begin{figure*}[t]
+\centering
+\epsfig{file=../Figures/combsurf.eps,width=6.5in,}
+\caption{Surface plot of individual reads for each file shown for both the DC-WAN (left) and MSU local Lustre (right). Individual reads for a particular file are plotted along the x-axis, file number is plotted along the y-axis. The z-axis is in MB/s. Individual reads exceeding the 1 Gbit/s line rate are attributed to the Lustre cache and are plotted in red.}
+\label{fig:surf}
+\end{figure*}
+
+\section{Results}\label{sec:results}
+By using VampirTrace to generate traces of the test application we were able to pinpoint exactly the duration and size of each of the I/O operations the application performed. Although the Fortran source code was designed to read in the input as two unformatted reads, this was transformed by the compiler into multiple system calls to LIBC, each of which read 2MB blocks. When interpreting the data we define two different classes of read rates; {\it individual read} rates and {\it average read} rates. Individual reads refer to the rate found by taking a read of a single 2MB block and dividing the size of the data (2MB) by the duration. This rate is not a true measure of the data rate over the network, however, due to a Lustre cache effect. Since we know this effect exists we can use the measurement to investigate the Lustre cache usage. The average read rate refers to the rate determined by dividing the total amount of data read from a file by the total time spent reading the file (i.e. end of last read $-$ start of first read). This rate is what one would typically refer to as the read rate. 
+
+Over a single test run 150 density files were read in by the application. The average of the average reads was 47.5 MB/s with a standard deviation of 2 MB/s for the DC-WAN and 106 MB/s with a standard deviation of 10 MB/s for the MSU local Lustre system. Figure \ref{fig:hist} shows histograms for the data from both the DC-WAN (left) and the MSU local Lustre (right). There are 30 bins in each histogram between the minimum and maximum average read rates. A normal distribution, scaled appropriately, is plotted on each of the histograms. What is most striking about this data is how well the DC-WAN average read rates are fit by a normal distribution with a small standard deviation, while the MSU local Lustre average read rates have a much larger standard deviation and strong peak above the average. Even so, the MSU local Lustre average reads are more or less normally distributed with the mean being shifted to a lower value due to the strong signal at 115 MB/s. Preliminary investigations have shown that altering Lustre parameters such as {\tt max\_rpcs\_in\_flight} can have a dramatic effect on the histogram distribution.
+
+We also investigated individual read rates for each file. Figure \ref{fig:surf} shows a surface of the individual reads for each of the 150 files for both the DC-WAN (left) and MSU local Lustre (right). Along the x-axis we plot each of the individual reads for a particular file, while the file number is plotted along the y-axis. Individual reads less than 500KB are excluded from the plot to eliminate the Fortran begin and end of records. There are $\sim$65 read operations for each file where each read (except the final one) is a 2MB block. Although Fortran translates the read statement into a series of 2MB block reads, as soon as the first read operation is performed Lustre attempts to read ahead as much as possible. This results in subsequent individual reads appearing to exceed line rate. To highlight the reads affected by this Lustre cache effect we have plotted any individual read rates above 1 Gbit/s in red. It should be noted that although these individual reads are definitely artifacts of the Lustre read ahead, there may still be some effects in the black bars which we are unable to detect.
+
+One can clearly see that the Lustre cache is far more active in the reads from the DC-WAN. The transfers here are typified by burst behavior. Slow 2MB reads are followed by cached reads. This pattern continues throughout the file, however, there is some indication that the read rates ramp up over the course of reading the file. Due to the file size the TCP streams do not have adequate time to scale up to the line rate. We believe that the latency (35.5 ms) combined with the relatively small file size (135MB) is the cause for this behavior. Separate network testing using the {\tt iperf} tool has shown that TCP transfers ramp up to $>$ 900 Mbit/s within several seconds. Furthermore, the file size also influences the average read rate. Basic tests using {\tt dd} show improved average read rates for larger files. Presumably, for larger files, TCP window scaling is able to reach the line rate before the file is finished being read. 
+
+In summary, we see an average read rate that is approximately a factor of two slower on the DC-WAN than on the MSU local Lustre system. However, the read rates on the DC-WAN are much less scattered than on the MSU system. The Lustre cache plays a much larger role in the DC-WAN reads. Overall, the performance hit on the DC-WAN results in an additional $45\%$ execution time for the application, extending the runtime from 550 seconds to 800 seconds. It should be noted, however that this analysis routine is particularly I/O intensive, with $\sim$40\% of the execution time spent in I/O in the best case of the data residing on the MSU local Lustre system. Many applications will have a much lower I/O intensity, and therefore will suffer less of a performance penalty. 
+
+\section{Conclusions}\label{sec:conclusions}
+In this paper we have demonstrated the the utility of the DC-WAN filesystem by bridging the Indiana University and Mississippi State University campuses and analyzing data produced on TeraGrid resources. We have detailed the performance that can be obtained with the DC-WAN, with negligible network and software tuning, and compared it to the performance of the local Lustre filesystem. We find that, on average, single striped reads from the DC-WAN are a factor of two slower than local reads resulting in a $45\%$ performance hit on the application overall. We postulate that this performance disparity is due to a combination of the network latency and file size. An additional factor is the fact that Lustre reads are typically slower than writes over the WAN, at least for a 10GigE network, as demonstrated by \cite{simms2007a}. Clearly, there are both benefits and drawbacks to using such a centralized filesystem. Some of the major points are mentioned in the following sections. 
+\subsection{Benefits}
+The benefits of such a system are both immediately evident and far reaching. By bridging multiple sites in a researcher's workflow we can eliminate the need to transfer files from one center to another. The DC-WAN, in particular, has the ability to bridge multiple TeraGrid sites and reach beyond the TeraGrid to the university campuses where researchers work. This both shortens the time a researcher must spend managing his data and reduces the complexity of the system a researcher must deal with. It also allows for the utilization of resources both within the TeraGrid and outside the TeraGrid in a single workflow. In the case of the CHYMERA code the first step in the workflow was the collection of simulation data from multiple specialized TeraGrid resources. For this step we saw excellent performance, as detailed in \cite{henschel2010}. Although the performance suffered a bit in the analysis phase of the workflow, the performance hit is offset by the ability to utilize a unforeseen supply of compute cycles. In addition, such a system allows a researcher to utilize specialized resources, such as 3-D visualization systems, at disparate locations that may not be available where the data were produced. Providing such a system to both TeraGrid and non-TeraGrid sites can yield a true democratization of resources.
+\subsection{Drawbacks}
+However, such flexibility is not without costs. The decrease in overall performance, although not crippling, is something to be considered. In many ways our test case is a worst case scenario, which still only resulted in a 45\% performance degradation. This may be mitigated by using larger input data, preloading the input data into the Lustre cache, or constructing the workflow in such a way to minimize the performance penalty. Another potential drawback is the fact that using the DC-WAN introduces more potential points of failure, namely the network, into the system. 
+
+In this article we have outlined several of the major use cases for a centralized filesystem on the TeraGrid made available to both TeraGrid and non-Teragrid sites. We detailed the design and performance of a test case of analyzing simulation data produced at multiple TeraGrid sites with a non-TeraGrid cluster located at Mississippi State University. Clearly, the DC-WAN provides an ideal system to conduct such research workflows. However our test case, admittedly with no performance tuning, suffered a moderate performance penalty over a local Lustre filesystem.  
+
+\section{Acknowledgments}
+The authors would like to thank key members of Team Data Capacitor: Nathan Heald, Justin Miller, and Josh Walgenbach for their efforts in bringing up the DC-WAN mount at MSU. We also thank key members of the MSU HPC team Joey Jones and Vince Sanders for their tireless work with the MSU HPC resources. Also, thanks to Robert Henschel and Thomas William for their assistance with the Vampir suite. Finally, thanks to Greg Grimes and Thomas Johnson for their invaluable assistance with the networks at MSU and IU, respectively.
+
+This research was supported in part by the National Science Foundation through TeraGrid resources provided by PSC and NCSA through TeraGrid allocation (AST080047). This material is based upon work supported by the National Science Foundation under Grants No. ACI-0338618l, OCI- 0451237, OCI-0535258, OCI-0504075, and CNS-0521433. TeraGrid systems are hosted by Indiana University, LONI, NCAR, NCSA, NICS, ORNL, PSC, Purdue University, SDSC, TACC, and UC/ANL. Any opinions, findings and conclusions or recommendations expressed in this material are those of the authors and do not necessarily reflect the views of the National Science Foundation.
+\bibliographystyle{abbrv}
+\bibliography{general}
+\end{document}
