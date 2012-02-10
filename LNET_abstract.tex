@@ -1,0 +1,73 @@
+\documentclass[]{sig-alternate}
+\usepackage{graphicx}
+\usepackage{epstopdf}
+\usepackage{url}
+\renewcommand{\topfraction}{0.85}
+\renewcommand{\textfraction}{0.1}
+
+\conferenceinfo{TBD}{TBD}
+\CopyrightYear{2012}
+\crdata{}
+
+\begin{document}
+
+\title{A Study of Lustre Networking Over a 100 Gigabit Wide Area Network with 50 milliseconds of Latency}
+
+\numberofauthors{6}
+\author{
+\alignauthor Scott Michael\\
+	\affaddr{Indiana University}\\
+	\affaddr{Bloomington, IN 47408}\\
+	\email{scamicha@iu.edu}
+\alignauthor Liang Zhen\\
+        \affaddr{Whamcloud Inc.}\\
+        \affaddr{Danville, CA 94526}\\
+        \email{liang@whamcloud.com}
+\alignauthor Robert Henschel\\
+        \affaddr{Indiana University}\\
+        \affaddr{Bloomington, IN 47408}\\
+        \email{henschel@iu.edu}
+\and
+\alignauthor Stephen Simms\\
+	\affaddr{Indiana University}\\
+	\affaddr{Bloomington, IN 47408}\\
+	\email{ssimms@indiana.edu}
+\alignauthor Eric Barton\\
+        \affaddr{Whamcloud Inc.}\\
+        \affaddr{Danville, CA 94526}\\
+        \email{eeb@whamcloud.com}
+\alignauthor Matthew Link\\
+	\affaddr{Indiana University}\\
+	\affaddr{Bloomington, IN 47408}\\
+	\email{mrlink@indiana.edu}		
+}
+
+\maketitle
+
+\begin{abstract}
+
+  As part of the SCinet Research Sandbox at the Supercomputing 2011 conference, Indiana University utilized a
+  dedicated 100 Gbps wide area network (WAN) link spanning more than 3500 km (2,175 mi) to demonstrate the
+  capabilities of the Lustre high performance parallel file system in a high bandwidth, high latency WAN
+  environment. This demonstration functioned as a proof of concept and provided an opportunity to study
+  Lustre's performance over a 100 Gbps WAN. To characterize the performance of the network and file system a
+  series of benchmarks and tests were undertaken. These included low level iperf network tests, Lustre
+  networking (LNET) tests, file system tests with the IOR benchmark, and a suite of real-world applications reading
+  and writing to the file system. All of the tests and benchmarks were run over a the WAN link with a latency
+  of 50.5 ms. In this article we describe the configuration and constraints of the demonstration and focus in
+  on the key findings and discoveries made regarding the Lustre networking layer for this extremely high
+  bandwidth and high latency connection. Of particular interest is the relationship between the {\tt peer\_credits}
+  and {\tt max\_rpcs\_in\_flight} settings when considering LNET performance.
+
+\end{abstract}
+
+\category{H.3.4}{Information Storage and Retrieval}{Systems and Software}[Distributed systems, Performance evaluation (efficiency and effectiveness)]
+\category{C.2.2}{Computer-\linebreak Communication Networks}{Network Protocols}[Protocol architecture (OSI model),
+Routing protocols]
+
+\terms{Algorithms, Performance}
+
+\keywords{WAN file systems, Lustre, Data Superconductor}
+\vspace{0.25in}
+
+\end{document}
