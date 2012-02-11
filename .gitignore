@@ -9,3 +9,4 @@
 *.blg
 auto
 *.rel
+*.out
