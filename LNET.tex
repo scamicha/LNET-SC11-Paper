@@ -147,7 +147,6 @@ We are mainly concerned sends, receives, and bulk transfers because our LNET tes
 operations. According to the {\it Understanding Lustre Internals} manual \cite{lustreint2009} a bulk transfer
 operation requires two RPCs to complete. The minimum number of RPCs required to saturate a WAN link with a
 given bandwidth delay product (BPD), obeys the following relationship.
-
 \begin{equation}
 \mathrm{RPCs > \frac{2\times BDP}{BS},}
 \label{eq:rpcs}
@@ -223,12 +222,12 @@ use a single storage system for the Lustre OSS nodes at each site.
 \end{center}
 \end{figure*}
 
-\subsection{Network}
+\subsection{Network}\label{sec:network}
 
 Before shipping equipment to the show floor in Seattle the demonstration configuration was assembled in the IU
 machine room for testing.  There we performed tests with the two Brocade MLXe routers connected back to back
 with the 100 Gbps connection spanning a few meters.  Local network tests across this connection showed a
-latency of 0.24 ms and maximum stable performance of 98 Gbit/sec using TCP iperf \cite{iperf2012}.
+latency of 0.24 ms and maximum stable performance of 98 Gbps using TCP iperf \cite{iperf2012}.
 
 The network link that was used for the SRS demonstration provided 100 Gbps connectivity from the IU booth on
 the SC11 show floor to the IU Data Center in Indianapolis. In the months preceding the SC11 conference,
@@ -275,52 +274,131 @@ Github.com \cite{lstgithub2011}.
 {\bf SIMMS NEED SOME ADDITIONAL STUFF HERE. MAYBE SHOULD OUTLINE THE OST CONFIG HERE?}
 
 \section{Results}\label{sec:results}
-\begin{equation}
-\mathrm{Peak Bandwidth = \frac{RPCs \times BS}{2 \times RTT}}
-\label{eq:band}
-\end{equation}
+
+In this section we present the results collected from the system using the LNET self-test module and self-test
+scripts that we have made available \cite{lstgithub2011}. The first tests we conducted were on the system that
+was built in the IU data center with the two systems connected back to back. As reported in section
+\ref{sec:network}, we were able to achieve 98 Gbps with iperf TCP tests. Performing an LNET self-test from 30
+clients to 16 servers yielded a throughput over 90 Gbps, which was in keeping with previous experiments
+\cite{ssimms2011}.
+
+After deploying the systems on the SC11 show floor and extensive network tuning to get a stable 80 Gbps TCP
+connection, we performed a series of LNET self-test measurements over the WAN. We varied the number of clients
+and servers, and the LNET concurrency. The concurrency parameter in the LNET self-test, although not
+identical, is analogous to the {\tt max\_rpcs\_in\_flight} setting. The difference lies in the fact that {\tt
+  max\_rpcs\_in\_flight} applies to a layer above LNET and so knows about things like OSTs, for example. But,
+for all intents and purposes, at the LNET level concurrency and {\tt max\_rpcs\_in\_flight} are
+equivalent. For the duration of this article we will use the terms LNET concurrency and RPCs in flight
+interchangeably.  
 
 \begin{figure}
 \centering
 \includegraphics[width=0.50\textwidth]{figures/default_pc_plot.eps}
-\caption{Results of LNET self test for 1, 2, and 4 clients using the default settings of 8 and 64 for {\tt
+\caption{Results of LNET self-test for 1, 2, and 4 clients using the default settings of 8 and 64 for {\tt
     peer\_credits} and {\tt credits}, respectively.}
 \label{fig:default}
 \end{figure}
 
+Our initial tests for a single server, using the default {\tt peer\_credits} and {\tt credits} values, are
+shown in figure \ref{fig:default}. Plotted is the throughput reported by LNET self-test for RPCs ranging from
+1 to 256. Results are shown for 1, 2, and 4 clients communicating with a single server. Each self-test run for
+a given number of RPCs and clients was run for 20 seconds before the measurement was taken so as not to be
+contaminated by the initial TCP ramp up phase. All self-test results reported here used a 1:1 distribution,
+meaning that each client maps to one, and only one, server. The servers are handed out to the clients in a
+round robin fashion. This fact is not important for the single server tests, but for the whole system (30
+clients and 16 servers) most servers connected to two clients while two servers had only a single client.
+
+Remember that each client and server was equipped with a 10 Gbps network interface, meaning that the
+theoretical peak throughput of the hardware was 1250 MB/s. Although, as we expected, we saw a greater
+throughput with a larger number of clients, the absolute numbers were far below what we had initially
+expected.
+
 \begin{figure}
 \centering
 \includegraphics[width=0.50\textwidth]{figures/32pc_plot.eps}
-\caption{Results of LNET self test for 1, 2, and 4 clients using the settings of 32 and XXX for {\tt
+\caption{Results of LNET self-test for 1, 2, and 4 clients using the settings of 32 and 1024 for {\tt
     peer\_credits} and {\tt credits}, respectively.}
 \label{fig:32pc}
 \end{figure}
 
+Following the rather low performance numbers seen in our initial tests we increased the {\tt credits} and {\tt
+  peer\_credits} values from their defaults to 1024 and 32, respectively. Though {\tt peer\_credits} were only
+increased by a factor of four, {\tt credits} were increased much more dramatically as we intended to stripe
+files more than eight ways in the file system benchmarks. Figure \ref{fig:32pc} shows the results for 1, 2,
+and 4 clients connecting to a single server for a range of RPCs after the credits had been increased. Clearly,
+the results are improved over the previous settings, but even with 4 clients the throughput was barely over
+50\% of the theoretical peak.  
+
 \begin{figure}
 \centering
 \includegraphics[width=0.50\textwidth]{figures/64pc_plot.eps}
-\caption{Results of LNET self test for 1, 2, and 4 clients using the settings of 64 and XXX for {\tt
+\caption{Results of LNET self-test for 1, 2, and 4 clients using the settings of 64 and 2048 for {\tt
     peer\_credits} and {\tt credits}, respectively.}
 \label{fig:64pc}
 \end{figure}
 
+Finally, we increased {\tt credits} and {\tt peer\_credits} to 2048 and 64, respectively. The results from
+these tests are shown in figure \ref{fig:64pc}. In this case we were able to achieve a peak of 1092 MB/s or
+87\% of the theoretical peak. We assume that the 2 and 4 client cases ran into some sort of TCP congestion for
+128 and more RPCs, which would account for the decreased performance for those RPC values.
+
+In order to explore the seemingly profound effect that the two credits settings have on throughput for RPCs
+greater than 8, we took a closer look at the simplest case: a single client and a single server. The single
+client results from figures \ref{fig:default}, \ref{fig:32pc}, and \ref{fig:64pc} are plotted side-by-side in
+figure \ref{fig:singleserver}. One can rewrite equation \ref{eq:rpcs} to give the maximum bandwidth that can
+be achieved given the {\tt max\_rpcs\_in\_flight}, the RTT of the link, and the block size. Doing so yields
+\begin{equation}
+\mathrm{Peak Bandwidth = \frac{RPCs \times BS}{2 \times RTT}},
+\label{eq:band}
+\end{equation}
+the peak bandwidth is also included in figure \ref{fig:singleserver} as a function of RPCs. One can see that
+for this simple case, where communication between client and server is most deterministic, the bandwidth
+achieved tracks the theoretical peak for RPCs up to the number of {\tt peer\_credits}. For RPC values greater
+than the number of {\tt peer\_credits} performance can continue to improve, but the rate of improvement
+rapidly diverges from the theoretical peak. 
+
 \begin{figure}
 \centering
 \includegraphics[width=0.50\textwidth]{figures/ss_plot.eps}
-\caption{A comparison of single client, single server results of LNET self test for 8, 32, and 64 {\tt
+\caption{A comparison of single client, single server results of LNET self-test for 8, 32, and 64 {\tt
     peer\_credits}. The values of {\tt credits} were set according to the {\tt peer\_credit} values. Also
   plotted is the theoretical peak throughput based on the number of RPCs as derived from equation \ref{eq:band}.}
 \label{fig:singleserver}
 \end{figure}
 
+Finally, we look at the effect that {\tt credits} and {\tt peer\_credits} have on the whole system. Figure
+\ref{fig:allserver} shows the throughput values measured for 30 clients and 16 servers. As mentioned earlier,
+the self-tests were run in a 1:1 distribution. So, for these measurements 14 of the servers were connected to
+2 clients, while 2 servers only had a single client. One can notice a trend similar to those seen in the
+previous figures. Namely, as {\tt peer\_credits} are increased, the aggregate bandwidth achieved increases for
+higher RPC values. Since the {\tt max\_rpcs\_in\_flight} parameter is set on a per client basis, one can
+calculate the theoretical peak throughput by multiplying equation \ref{eq:band} by the number of clients; in
+this case 30. Theoretical peak values are included in as a dashed line in figure \ref{fig:allserver}. It is
+difficult to say why the throughput values were so much smaller than the peak theoretical values for RPCs
+greater than 8, even when {\tt peer\_credit} were set to 64. We hypothesize that the culprit could be TCP
+congestion, or some dynamic VLAN switching on the part of the routers between the show floor and the IU data
+center. 
+
 \begin{figure}
 \centering
-\includegraphics[width=0.50\textwidth]{figures/all_pc_plot.eps}
-\caption{}
+\includegraphics[width=0.50\textwidth]{figures/all_pc_theory_plot.eps}
+\caption{A comparison of total system results of LNET self-test for 8, 32, and 64 {\tt
+    peer\_credits}. The values of {\tt credits} were set according to the {\tt peer\_credit} values. The total
+system consisted of 30 clients and 16 servers. The dashed line indicated the peak theoretical throughput faor
+30 clients derived from equation \ref{eq:band}.}
 \label{fig:allserver}
 \end{figure}
 
+At any rate, the maximum throughput achieved using 30 clients and 16 servers was 7196 MB/s. Due to the routing
+behavior between Seattle and Indianapolis, the traffic was split across two 50 Gbps VLANs on the ESnet and
+Internet2 routers, we found that the maximum throughput could be achieved using the same number of clients and
+servers, using between eight to ten clients and servers. For the LNET self-test our best results were achieved
+with ten clients and ten servers, a LNET concurrency of 128, and a {\tt peer\_credits} setting of 64. With
+these settings we were able to achieve an aggregate throughput of 9450 MB/s, an efficiency of 76\%.
+
 \section{Discussion}\label{sec:discussion} 
+
+
 
 \section{Conclusions}\label{sec:conclusion}
   
