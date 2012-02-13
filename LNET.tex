@@ -69,13 +69,13 @@ Routing protocols]
 
 \terms{Algorithms, Performance}
 
-\keywords{WAN file systems, Lustre, Data Superconductor}
+\keywords{WAN file systems, Lustre, 100 Gbit Networking}
 
 \section{Introduction}\label{sec:intro}
 
 The SCinet Research Sandbox (SRS) at the Supercomputing 2011 (SC11) conference encourages institutions to
 showcase new and innovative technologies in the area of networking. For the demonstration SCinet, in
-collaboration with ESnet and Internet2, provided all SRS participants with a 100 Gbps network connection from
+collaboration with ESnet and Internet2, provided SRS participants with a 100 Gbps network connection from
 the SC11 show floor to the Internet2 backbone. This link provided an end-to-end connection from the IU booth
 on the SC11 show floor to the IU Data Center in Indianapolis, Indiana. 
 
@@ -108,10 +108,10 @@ and test time.
 The fact that this study was performed in such a limited timeframe influenced the measurements we were able to
 take. In addition to the fact that the time allotted to IU was fairly short, the initial connection of the 100
 Gbps link required some fine tuning of the routing elements between Seattle and Indianapolis to achieve an
-eventual peak throughput of 96 Gbps on the TCP layer \cite{henschel2012}. Although the network issues were
-eventually resolved, this phase of the troubleshooting consumed nearly half of the time allocated to IU,
-leaving approximately 10 hours for troubleshooting and gathering data on LNET, file system benchmarks, and the
-performance of  scientific applications.
+eventual unidirectional peak throughput of 96 Gbps on the TCP layer \cite{henschel2012}. Although the network
+issues were eventually resolved, this phase of the troubleshooting consumed nearly half of the time allocated
+to IU, leaving approximately 10 hours for troubleshooting and gathering data on LNET, file system benchmarks,
+and the performance of scientific applications.
 
 This paper is structured as follows: Section \ref{sec:LNET} gives a brief technical overview of the LNET layer
 of Lustre with particular attention paid to remote procedure calls (RPCs) and peer credits. Section
@@ -134,16 +134,16 @@ perform bulk data transfer, and provide for error recovery. The number of outsta
 client may submit to a single server is controlled by the Lustre tunable {\tt max\_rpcs\_in\_flight}. This is
 a client-side setting and may be set on a per client basis. The default setting of {\tt max\_rpcs\_in\_flight}
 = 8 may be suitable for many data center environments where there is relatively low latency between the
-storage system and the clients it serves. However, in a WAN environment RTTs tend to be much longer and in
-order to keep the maximum number of RPCs ``on the wire'' the {\tt max\_rpcs\_in\_flight} is typically
-increased. Though one might think that raising the ceiling on RPCs should always improve performance, the
-potential drawback lies in the fact that a single client can then consume more resources on a server, and at
-some point, if {\tt max\_rpcs\_in\_flight} are increased across all clients, the server may become
-overwhelmed. It should also be noted that the {\it Lustre Operations Manual} \cite{LustreManual2012} incorrectly
-states that the largest value {\tt max\_rpcs\_in\_flight} may take is 32, when, in fact, we tested values up
-to and including {\tt max\_rpcs\_in\_flight} = 256.
+storage system and the clients it serves. However, in a WAN environment round-trip times (RTTs) tend to be
+much longer and in order to keep the maximum number of RPCs ``on the wire'' the {\tt max\_rpcs\_in\_flight} is
+typically increased. Though one might think that raising the ceiling on RPCs should always improve
+performance, the potential drawback lies in the fact that a single client can then consume more resources on a
+server, and at some point, if {\tt max\_rpcs\_in\_flight} are increased across all clients, the server may
+become overwhelmed. It should also be noted that the {\it Lustre Operations Manual} \cite{LustreManual2012}
+incorrectly states that the largest value {\tt max\_rpcs\_in\_flight} may take is 32, when, in fact, we tested
+values up to and including {\tt max\_rpcs\_in\_flight} = 256.
 
-We are mainly concerned sends, receives, and bulk transfers because our LNET testing focused on bulk
+We are mainly concerned with sends, receives, and bulk transfers because our LNET testing focused on bulk
 operations. According to the {\it Understanding Lustre Internals} manual \cite{lustreint2009} a bulk transfer
 operation requires two RPCs to complete. The minimum number of RPCs required to saturate a WAN link with a
 given bandwidth delay product (BPD), obeys the following relationship.
@@ -162,13 +162,16 @@ block size, slightly more than 5,000 RPCs are needed.
 
 If one uses ksocklnd for the communication between Lustre network devices (LNDs) further tuning parameters
 governing the amount of data ``on the wire'' are available within the ksocklnd module. The key parameters in
+
+{\bf THIS NEEDS SOME INTRODUCTION ABOUT WHAT ksocklnd actually is.... Barton, Simms?}
+
 the case of the SRS demonstration, which we present results for in section \ref{sec:results}, were 
 {\tt credits} and {\tt peer\_credits}. While the {\tt max\_rpcs\_in\_flight} parameter is applicable at a higher
 layer, {\tt credits} and {\tt peer\_credits} control the number of messages that can be concurrently sent over
 a LND network interface (NI). The {\tt credits} value determines the maximum number of {\it total} concurrent
 sends from a NI, while the {\tt peer\_credits} value determines the maximum number of concurrent sends from a
 NI to the same destination, or peer. By default {\tt credits} is set to 64 and {\tt peer\_credits} is set to
-8. This means that a if single client stripes files over more than 8 servers using 8 {\tt peer\_credits} it
+8. This means that if a single client stripes files over more than 8 servers using 8 {\tt peer\_credits} it
 will exceed the number of allocated {\tt credits}. It should be noted that {\tt credits} and {\tt
   peer\_credits} apply to sends only, while {\tt max\_rpcs\_in\_flight} apply to both sends in
 receives. Additionally, {\tt credits} and {\tt peer\_credits} are returned to their pool once the send is
@@ -398,7 +401,33 @@ these settings we were able to achieve an aggregate throughput of 9450 MB/s, an 
 
 \section{Discussion}\label{sec:discussion} 
 
+The results presented in section \ref{sec:results} raise several interesting questions for Lustre over the
+WAN, particularly for extremely high bandwidth links. Clearly, the default of 8 for the {\tt
+  max\_rpcs\_in\_flight} setting is insufficient when mounting a Lustre filesystem over tens of milliseconds
+of latency on a 10 Gpbs network interface. However, it appears that increasing {\tt max\_rpcs\_in\_flight}
+alone is not sufficient to achieve peak performance. This is in contrast to the findings of Simms et
+al. \cite{simms2007} who were able to achieve performance above 700 MB/s when writing from a single 10 Gpbs
+client to several OSS. We were unable to find any peer-reviewed studies that were published on the effects of
+{\tt max\_rpcs\_in\_flight} on Lustre WAN performance besides the Simms et al. work, so we will focus our
+comparisons on that work.
 
+There are several key differences between this study and the one performed by Simms et al. Firstly, Simms'
+group was measuring the end-to-end performance of a production Lustre file system while the results presented
+in this article are LNET measurements only. Though it should be noted that the performance measurements that
+were made using the file system (e.g. the IOR benchmark and a suite of app This would tend to overstate our throughput values because the
+Simms study had the additional overhead associated with the upper layers of the file system and actually
+writing data to disk. Secondly, we have presented data for multiple clients communicating to a single server,
+while Simms et al. investigate a single client communicating with multiple servers. However, when looking at
+total throughput values, and assuming all clients and servers have 10 Gpbs network interfaces, these two cases
+can be considered to be roughly equivalent. Finally, the Simms study used Lustre version 1.4.7.1 while this
+study uses Lustre 1.8.XXXX. In fact, it appears that the {\it Lustre Operations Manual} was correct in stating
+that {\tt max\_rpcs\_in\_flight} had a maximum value of 32 at the time of writing for the Simms et al. work,
+but in subsequent releases of the Lustre software this maximum value must have been increased. 
+
+Furthermore, we postulate that in the interim releases between the Simms et al. work and this study {\tt
+  credits} and {\tt peer\_credits} were somehow engineered into the LNET protocol in a far more integral way
+for release 1.8.XXXX than was seen in 1.4.7.1. We have confirmed with the authors that they did not tune {\tt
+  credits} or {\tt peer\_credits} for their study, and the default values were used \cite{simmsprivate}. 
 
 \section{Conclusions}\label{sec:conclusion}
   
