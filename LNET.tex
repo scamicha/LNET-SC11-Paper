@@ -56,7 +56,7 @@
   series of benchmarks and tests were undertaken. These included low level iperf network tests, Lustre
   networking (LNET) tests, file system tests with the IOR benchmark, and a suite of real-world applications reading
   and writing to the file system. All of the tests and benchmarks were run over a the WAN link with a latency
-  of 50.5 ms. In this article we describe the configuration and constraints of the demonstration and focus in
+  of 50.5 ms. In this article we describe the configuration and constraints of the demonstration and focuses in
   on the key findings and discoveries made regarding the Lustre networking layer for this extremely high
   bandwidth and high latency connection. Of particular interest is the relationship between the {\tt peer\_credits}
   and {\tt max\_rpcs\_in\_flight} settings when considering LNET performance.
@@ -108,10 +108,12 @@ and test time.
 The fact that this study was performed in such a limited timeframe influenced the measurements we were able to
 take. In addition to the fact that the time allotted to IU was fairly short, the initial connection of the 100
 Gbps link required some fine tuning of the routing elements between Seattle and Indianapolis to achieve an
-eventual unidirectional peak throughput of 96 Gbps on the TCP layer \cite{henschel2012}. Although the network
-issues were eventually resolved, this phase of the troubleshooting consumed nearly half of the time allocated
-to IU, leaving approximately 10 hours for troubleshooting and gathering data on LNET, file system benchmarks,
-and the performance of scientific applications.
+eventual uni-directional peak throughput of 96 Gbps on the TCP layer \cite{henschel2012}. Although some of the
+network issues were eventually resolved, the network was quite variable throughout the SC11 conference and we
+were never able to achieve full bi-directional throughput. In addition, the network phase of the
+troubleshooting consumed nearly half of the time allocated to IU, leaving approximately 10 hours for
+troubleshooting and gathering data on LNET, file system benchmarks, and the performance of scientific
+applications.
 
 This paper is structured as follows: Section \ref{sec:LNET} gives a brief technical overview of the LNET layer
 of Lustre with particular attention paid to remote procedure calls (RPCs) and peer credits. Section
@@ -283,7 +285,7 @@ scripts that we have made available \cite{lstgithub2011}. The first tests we con
 was built in the IU data center with the two systems connected back to back. As reported in section
 \ref{sec:network}, we were able to achieve 98 Gbps with iperf TCP tests. Performing an LNET self-test from 30
 clients to 16 servers yielded a throughput over 90 Gbps, which was in keeping with previous experiments
-\cite{ssimms2011}.
+\cite{kluge2012}.
 
 After deploying the systems on the SC11 show floor and extensive network tuning to get a stable 80 Gbps TCP
 connection, we performed a series of LNET self-test measurements over the WAN. We varied the number of clients
@@ -414,22 +416,93 @@ comparisons on that work.
 There are several key differences between this study and the one performed by Simms et al. Firstly, Simms'
 group was measuring the end-to-end performance of a production Lustre file system while the results presented
 in this article are LNET measurements only. Though it should be noted that the performance measurements that
-were made using the file system (e.g. the IOR benchmark and a suite of app This would tend to overstate our throughput values because the
-Simms study had the additional overhead associated with the upper layers of the file system and actually
-writing data to disk. Secondly, we have presented data for multiple clients communicating to a single server,
-while Simms et al. investigate a single client communicating with multiple servers. However, when looking at
-total throughput values, and assuming all clients and servers have 10 Gpbs network interfaces, these two cases
-can be considered to be roughly equivalent. Finally, the Simms study used Lustre version 1.4.7.1 while this
-study uses Lustre 1.8.XXXX. In fact, it appears that the {\it Lustre Operations Manual} was correct in stating
-that {\tt max\_rpcs\_in\_flight} had a maximum value of 32 at the time of writing for the Simms et al. work,
-but in subsequent releases of the Lustre software this maximum value must have been increased. 
+were made using the file system (e.g. the IOR benchmark and a suite of applications) agreed with conclusions
+drawn from the LNET testing, that is, the best throughput numbers were measured when {\tt peer\_credits} was
+set to 64 and {\tt credits} was set to 2048. This difference in quantities measured would tend to overstate
+our throughput values compared to Simms et al. because the Simms study had the additional overhead associated
+with the upper layers of the file system and actually writing data to disk. Secondly, we have presented data
+for multiple clients communicating to a single server, while Simms et al. investigate a single client
+communicating with multiple servers. However, when looking at total throughput values, and assuming all
+clients and servers have 10 Gpbs network interfaces, these two cases can be considered to be roughly
+equivalent. Finally, the Simms study used Lustre version 1.4.7.1 while this study uses Lustre 1.8.XXXX. In
+fact, it appears that the {\it Lustre Operations Manual} was correct in stating that {\tt
+  max\_rpcs\_in\_flight} had a maximum value of 32 at the time of writing for the Simms et al. work, but in
+subsequent releases of the Lustre software this maximum value must have been increased.
 
 Furthermore, we postulate that in the interim releases between the Simms et al. work and this study {\tt
   credits} and {\tt peer\_credits} were somehow engineered into the LNET protocol in a far more integral way
 for release 1.8.XXXX than was seen in 1.4.7.1. We have confirmed with the authors that they did not tune {\tt
-  credits} or {\tt peer\_credits} for their study, and the default values were used \cite{simmsprivate}. 
+  credits} or {\tt peer\_credits} for their study, and the default values were used \cite{simmsprivate}. This
+is obviously a very significant change resulting in the fact that in order to achieve peak performance for a
+WAN file system in Lustre 1.8 series one must adjust {\it both} {\tt max\_rpcs\_in\_flight} and {\tt
+  credits}/{\tt peer\_credits}.
+
+The question then arises, ``What are the optimum values for {\tt max\_rpcs\_in\_flight}, {\tt credits}, and
+{\tt peer\_credits} for a given system with a certain number of clients, servers, and a given latency and
+bandwidth?'' There are several things that one should consider when approaching this question for a given set
+of clients and servers. Of course, it is important to understand the potential drawbacks of setting the {\tt
+  max\_rpcs\_in\_flight}, {\tt credits}, and {\tt peer\_credits} too high. Careful inspection of figures
+\ref{fig:32pc}, \ref{fig:64pc}, and \ref{fig:allserver} shows that when total number of RPCs in flight grows
+too large performance begins to suffer. This effect is evident for RPC settings > 64, the decrease in
+throughput is probably due to TCP congestion in the network, or the OSS are not able to process such a large
+number of requests coming in from multiple clients, or some combination of the two. In order to determine
+whether increasing the {\tt max\_rpcs\_in\_flight} parameter will be beneficial, the first thing that one
+should consider is the bandwidth and latency between clients and servers. The number of RPCs needed directly
+proportional to the BDP, that is, it depends on both the bandwidth and the latency. In a typical data center
+latencies are generally quite small, but even for a modest latency such as 1 ms equation \ref{eq:rpcs}
+indicates that a 10 Gpbs link requires > 20 RPCs. Of course, even a 1 ms latency is large within a data
+center, but a central Lustre file system serving several resources on a university campus might have latencies
+in this range. Certainly when one considers any type of WAN the default value of 8 RPCs is usually inadequate.
+
+The next item to consider is the number of clients that will be simultaneously writing to the file system. The
+data presented here for the SRS demo used a relatively small number of clients (30) but they were all
+communicating with the servers. The number of RPCs a cluster can put ``on the wire'' is a product of the {\tt
+  max\_rpcs\_in\_flight} parameter and the number of clients performing I/O. However, in a typical production
+cluster, it is uncommon for all of the nodes to be performing I/O simultaneously.  One must decide, then,
+whether to favor maximum throughput for a single client, or at the other extreme, for the entire cluster
+performing I/O simultaneously. Configuring for maximum throughput with a single client will result in a larger
+{\tt max\_rpcs\_in\_flight} value while configuring for the entire cluster will result in a much smaller
+value, somewhere in between may give the best of both worlds.
+
+Once one has decided on the {\tt max\_rpcs\_in\_flight} parameter, both {\tt credits} {\tt peer\_credits}
+should be set on both the clients and the servers. Figure \ref{fig:singleserver} shows fairly conclusively
+that, at least for a single client communicating with a single server, the {\tt peer\_credit} value should be
+set at least equal to {\tt max\_rpcs\_in\_flight}. This comes from the fact that the throughput values stay at
+the theoretical peak for RPC values up to and including the number of {\tt peer\_credits} but once the RPC
+value exceeds the number of {\tt peer\_credits} the throughput falls away from the theoretical peak. In
+general, the value of {\tt credits} should, at a minimum, be set to the {\tt peer\_credits} value times the number of
+clients/servers the network interface will be communicating with.
+
+In closing, a few caveats should be mentioned. The data presented here were collected for a single system that
+was deployed, configured, tested, put into production, and torn down in less than a week. Throughout our
+testing time issues with the 100 Gbps network abounded. In fact, we were never able to achieve a reasonable
+throughput number for the network in the Indianapolis to Seattle direction. In addition, our the system we
+deployed was somewhat atypical for a Lustre file system in that it was deployed over a wide area network, it
+used 100 Gbps networking over the WAN, and it had a relatively small number of clients and servers. These
+facts however, taken singly or in aggregate, can not fully explain the trends we see in the data, so we are
+forced to conclude that for a WAN deployment of a Lustre file system {\tt max\_rpcs\_in\_flight}, {\tt
+  credits}, and {\tt peer\_credits} play a crucial role in achieving maximum performance. One should also be
+aware of other parameters that may affect the throughput of the end-to-end filesystem. For example, the Lustre
+parameter {\tt max\_dirty\_mb} did not play any role in these tests as it does not affect LNET performance,
+but to achieve peak IOR performance it needed to be increased along with {\tt max\_rpcs\_in\_flight}. We found
+that the optimal setting was a few times {\tt max\_rpcs\_in\_flight}.
 
 \section{Conclusions}\label{sec:conclusion}
+
+In this article we have explored the effects of Lustre and ksocklnd tunable parameters on the performance of a
+Lustre WAN deployment over a 100 Gbps network. Namely, the key parameters are {\tt max\_rpcs\_in\_flight},
+{\tt credits}, and {\tt peer\_credits} we found that a setting of {\tt peer\_credits}=64, {\tt credits}=2048,
+and {\tt max\_rpcs\_in\_flight} $\geq$ 64. We further discovered that for optimal throughput one should set
+the {\tt peer\_credits} value equal to or greater than {\tt max\_rpcs\_in\_flight}. We presume that if we had
+increased the value of {\tt peer\_credits} further we would have continued to see gains in
+throughput. Unfortunately, we were unable to conduct these tests due to the time limitations of the SRS
+demonstration.
+
+Researchers and administrators of large Lustre installations that are deployed over networks with moderate to
+large latencies should consider the potential gains in performance that can be achieved by properly tuning
+these parameters.
+
+{\bf I KNOW THIS CONCLUSION IS WEAK, I'LL ADD SOME MORE TO IT TOMORROW}
   
 \section{Acknowledgements}
 
