@@ -146,19 +146,29 @@ incorrectly states that the largest value {\tt max\_rpcs\_in\_flight} may take i
 values up to and including {\tt max\_rpcs\_in\_flight} = 256.
 
 We are mainly concerned with sends, receives, and bulk transfers because our LNET testing focused on bulk
-operations. According to the {\it Understanding Lustre Internals} manual \cite{lustreint2009} a bulk transfer
-operation requires two RPCs to complete. The minimum number of RPCs required to saturate a WAN link with a
-given bandwidth delay product (BPD), obeys the following relationship.
+operations. In Lustre a bulk transfer operation requires one RPCs to complete. The RPC request for a write
+from the client to the server works as follows {\bf EXPLANATION FROM BARTON}. So then, the maximum data
+transfer rate for a single RPC is equal to the volume of the data transferred, i.e. the block size, divided by
+two times the RTT of the network link. Thus the peak throughput for a given number of RPCs is
+\begin{equation}
+\mathrm{Peak Bandwidth = \frac{RPCs \times BS}{2 \times RTT}},
+\label{eq:band}
+\end{equation}
+where RPCs is the maximum number of RPCs in flight, and BS is the block size of the RPC packets, typically 1
+MB. Equation \ref{eq:band} represents a theoretical maximum and does not take into account the physical
+limitations of a given network link.
+
+Based on equation \ref{eq:band}, the minimum number of RPCs required to saturate a WAN link with a given
+bandwidth delay product (BPD), obeys the following relationship.
 \begin{equation}
 \mathrm{RPCs > \frac{2\times BDP}{BS},}
 \label{eq:rpcs}
 \end{equation}
 where RPCs is the {\it total} number of RPCs needed, and is a product of the Lustre tunable {\tt
   max\_rpcs\_in\_flight}, number of clients, and number of servers per client (i.e. stripes). BDP is the
-bandwidth delay product given by, $\mathrm{link bandwidth \times RTT}$, and BS is the block size of the RPC
-packets, typically 1 MB. This relationship has been seen previously by Simms et al. \cite{simms2007}, but was
-not stated in this form. For the 100 Gbps link used in the SRS demonstration, with a 50.5 ms RTT and 1 MB
-block size, slightly more than 5,000 RPCs are needed. 
+bandwidth delay product given by, $\mathrm{link bandwidth \times RTT}$. This relationship has been seen
+previously by Simms et al. \cite{simms2007}, but was not stated in this form. For the 100 Gbps link used in
+the SRS demonstration, with a 50.5 ms RTT and 1 MB block size, slightly more than 5,000 RPCs are needed.
 
 \subsection{Lustre Peer Credits}
 
@@ -350,13 +360,9 @@ these tests are shown in figure \ref{fig:64pc}. In this case we were able to ach
 In order to explore the seemingly profound effect that the two credits settings have on throughput for RPCs
 greater than 8, we took a closer look at the simplest case: a single client and a single server. The single
 client results from figures \ref{fig:default}, \ref{fig:32pc}, and \ref{fig:64pc} are plotted side-by-side in
-figure \ref{fig:singleserver}. One can rewrite equation \ref{eq:rpcs} to give the maximum bandwidth that can
-be achieved given the {\tt max\_rpcs\_in\_flight}, the RTT of the link, and the block size. Doing so yields
-\begin{equation}
-\mathrm{Peak Bandwidth = \frac{RPCs \times BS}{2 \times RTT}},
-\label{eq:band}
-\end{equation}
-the peak bandwidth is also included in figure \ref{fig:singleserver} as a function of RPCs. One can see that
+figure \ref{fig:singleserver}. Based on equation \ref{eq:band} we calculated the maximum bandwidth that can
+be achieved given the {\tt max\_rpcs\_in\_flight}, the RTT of the link, and the block size.
+This peak bandwidth is also included in figure \ref{fig:singleserver} as a function of RPCs. One can see that
 for this simple case, where communication between client and server is most deterministic, the bandwidth
 achieved tracks the theoretical peak for RPCs up to the number of {\tt peer\_credits}. For RPC values greater
 than the number of {\tt peer\_credits} performance can continue to improve, but the rate of improvement
@@ -376,13 +382,17 @@ Finally, we look at the effect that {\tt credits} and {\tt peer\_credits} have o
 the self-tests were run in a 1:1 distribution. So, for these measurements 14 of the servers were connected to
 2 clients, while 2 servers only had a single client. One can notice a trend similar to those seen in the
 previous figures. Namely, as {\tt peer\_credits} are increased, the aggregate bandwidth achieved increases for
-higher RPC values. Since the {\tt max\_rpcs\_in\_flight} parameter is set on a per client basis, one can
+higher RPC values. However, with the full 30 clients and 16 servers we were unable to saturate the 100 Gbps
+link for any combination of {\tt max\_rpcs\_in\_flight}, {\tt credits}, and {\tt peer\_credits} we tested. Since the {\tt max\_rpcs\_in\_flight} parameter is set on a per client basis, one can
 calculate the theoretical peak throughput by multiplying equation \ref{eq:band} by the number of clients; in
-this case 30. Theoretical peak values are included in as a dashed line in figure \ref{fig:allserver}. It is
+this case 30. Theoretical peak values are included in as a dashed line in figure \ref{fig:allserver}, and are
+based solely on the total number of RPCs without taking the physical limitation of the link into
+account. Given that we were able to achieve the theoretical throughput for a single client and server, it is
 difficult to say why the throughput values were so much smaller than the peak theoretical values for RPCs
 greater than 8, even when {\tt peer\_credit} were set to 64. We hypothesize that the culprit could be TCP
 congestion, or some dynamic VLAN switching on the part of the routers between the show floor and the IU data
-center. 
+center. Another possibility is that the servers were unable to handle the load of multiple clients, we see
+this for {\tt max\_rpcs\_in\_flight} > 64 in the single server data presented in figures \ref{fig:32pc} and \ref{fig:64pc}.  
 
 \begin{figure}
 \centering
@@ -429,13 +439,15 @@ fact, it appears that the {\it Lustre Operations Manual} was correct in stating 
   max\_rpcs\_in\_flight} had a maximum value of 32 at the time of writing for the Simms et al. work, but in
 subsequent releases of the Lustre software this maximum value must have been increased.
 
-Furthermore, we postulate that in the interim releases between the Simms et al. work and this study {\tt
-  credits} and {\tt peer\_credits} were somehow engineered into the LNET protocol in a far more integral way
-for release 1.8.XXXX than was seen in 1.4.7.1. We have confirmed with the authors that they did not tune {\tt
-  credits} or {\tt peer\_credits} for their study, and the default values were used \cite{simmsprivate}. This
-is obviously a very significant change resulting in the fact that in order to achieve peak performance for a
-WAN file system in Lustre 1.8 series one must adjust {\it both} {\tt max\_rpcs\_in\_flight} and {\tt
-  credits}/{\tt peer\_credits}.
+Furthermore, we postulate that the key difference between the Simms et al. work and this study was the fact
+that the RTT between client and server was 19 ms compared to our 50.5 ms. For the longer latency links it
+appears that {\bf ....SHIT THIS DOESN'T MAKE SENSE TO ME ANYMORE! SHOULDN'T PEER\_CREDITS BE MORE EASILY
+  OVERRUN WHEN THE LATENCY IS SMALL?} {\tt credits} and {\tt peer\_credits} were somehow engineered into the
+LNET protocol in a far more integral way for release 1.8.XXXX than was seen in 1.4.7.1. We have confirmed with
+the authors that they did not tune {\tt credits} or {\tt peer\_credits} for their study, and the default
+values were used \cite{simmsprivate}. This is obviously a very significant change resulting in the fact that
+in order to achieve peak performance for a WAN file system in Lustre 1.8 series one must adjust {\it both}
+{\tt max\_rpcs\_in\_flight} and {\tt credits}/{\tt peer\_credits}.
 
 The question then arises, ``What are the optimum values for {\tt max\_rpcs\_in\_flight}, {\tt credits}, and
 {\tt peer\_credits} for a given system with a certain number of clients, servers, and a given latency and
