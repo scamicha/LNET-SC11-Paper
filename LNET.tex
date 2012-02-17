@@ -415,7 +415,7 @@ difficult to say why the throughput values were so much smaller than the peak th
 greater than 8, even when {\tt peer\_credit} were set to 64. We hypothesize that the culprit could be TCP
 congestion, or some dynamic VLAN switching on the part of the routers between the show floor and the IU data
 center. Another possibility is that the servers were unable to handle the load of multiple clients, we see
-this for {\tt max\_rpcs\_in\_flight} > 64 in the single server data presented in figures \ref{fig:32pc} and \ref{fig:64pc}.  
+this for {\tt max\_rpcs\_in\_flight} $>$ 64 in the single server data presented in figures \ref{fig:32pc} and \ref{fig:64pc}.  
 
 \begin{figure}
 \centering
@@ -470,9 +470,9 @@ to empirically determine a coefficient governing the throughput. Their equation 
 \end{equation}
 A linear least squares fit to the data yielded a K value of 22.5 for a single stripe. By plugging in the link
 latency value of 19 ms into our equation \ref{eq:band} we see that the coefficient for the theoretical peak is
-actually 26.3. In fact, examination of figure 5 of Simms et al. \ref{simms2007} shows that the relationship
+actually 26.3. In fact, examination of figure 5 of Simms et al. \cite{simms2007} shows that the relationship
 between RPCs and throughput is not exactly linear, but begins to fall away from linear once {\tt
-  max\_rpcs\_in\_flight} > 8. A linear fit to the values with RPCs between 1 and 8 would also probably yield a
+  max\_rpcs\_in\_flight} $>$ 8. A linear fit to the values with RPCs between 1 and 8 would also probably yield a
 K-value somewhat closer to the peak theoretical value of 26.3. We have confirmed with the authors that they
 did not tune {\tt credits} or {\tt peer\_credits} for their study, and the default values were used
 \cite{simmsprivate}. So it would seem that, at least for the single client to single server interaction, the
@@ -487,14 +487,14 @@ bandwidth?'' There are several things that one should consider when approaching 
 of clients and servers. Of course, it is important to understand the potential drawbacks of setting the {\tt
   max\_rpcs\_in\_flight}, {\tt credits}, and {\tt peer\_credits} too high. Careful inspection of figures
 \ref{fig:32pc}, \ref{fig:64pc}, and \ref{fig:allserver} shows that when total number of RPCs in flight grows
-too large performance begins to suffer. This effect is evident for RPC settings > 64, the decrease in
+too large performance begins to suffer. This effect is evident for RPC settings $>$ 64, the decrease in
 throughput is probably due to TCP congestion in the network, or the OSS are not able to process such a large
 number of requests coming in from multiple clients, or some combination of the two. In order to determine
 whether increasing the {\tt max\_rpcs\_in\_flight} parameter will be beneficial, the first thing that one
 should consider is the bandwidth and latency between clients and servers. The number of RPCs needed directly
 proportional to the BDP, that is, it depends on both the bandwidth and the latency. In a typical data center
 latencies are generally quite small, but even for a modest latency such as 1 ms equation \ref{eq:rpcs}
-indicates that a 10 Gpbs link requires > 20 RPCs. Of course, even a 1 ms latency is large within a data
+indicates that a 10 Gpbs link requires $>$ 20 RPCs. Of course, even a 1 ms latency is large within a data
 center, but a central Lustre file system serving several resources on a university campus might have latencies
 in this range. Certainly when one considers any type of WAN the default value of 8 RPCs is usually inadequate.
 
@@ -547,15 +547,27 @@ large latencies should consider the potential gains in performance that can be a
 these parameters. Clearly there are great number of variables to consider when trying to determine the best
 settings of these values to achieve the best throughput, including the number of clients, number of OSS,
 number of OST per OSS, network bandwidth and latency, and client and server hardware specifications. In
-addition, Lustre performance on the LNET and file system level is heavily dependent on the underlying
-network performance. While it is possible to mask certain network effects by tuning the Lustre configuration,
-i.e. increasing the number of stripes to utilize more servers in parallel, ultimately a poorly performing network
-will make it impossible to achieve peak performance with Lustre. Unfortunately, 
+addition, Lustre performance on the LNET and file system level is heavily dependent on the underlying network
+performance. While it is possible to mask certain network effects by tuning the Lustre configuration,
+i.e. increasing the number of stripes to utilize more servers in parallel, ultimately a poorly performing
+network will make it impossible to achieve peak performance with Lustre. Unfortunately, many of these
+variables can change over time, network performance can vary, OSS and OSTs may fail and be temporarily taken
+out of service, and the number of clients writing from a cluster can vary with time. Therefore, in general, it
+is not possible to choose tuning values that will always deliver maximum performance with minimum system
+impact. We have experienced precisely this issue in the past when extending Lustre file systems from the IU
+data center to remote sites such as the Pittsburgh Supercomputing Center (latency = 50 ms) or the NOAO data
+center in Tucson (latency = 75 ms).
 
-We have seen this in the past when extending Lustre file systems from the IU data center to remote sites such
-as the Pittsburgh Supercomputing Center (latency = 50 ms) or the NOAO data center in Tucson (latency = 75 ms). We
-have developed methodologies to systematically diagnose network irregularities such as asymmetric routing and
-MTU inconsistencies for a given path. Those have helped us achieve excellent performance for accessing Lustre
+Ultimately, the ideal solution to the tuning problem would be to include some sort of monitoring and tuning
+facility within the Lustre file system itself. This module could dynamically monitor the performance of the
+network link, the number of clients, OSS and OSTs and adjust the relevant parameters accordingly to maximize
+file system performance. However, since such a facility is not even on the Lustre roadmap, we assume it will
+be some time before such a functionality could be developed. In the meantime, an interim step would be to
+develop a monitoring framework that could notify operators when variables relevant to performance have
+changed. The operators could then investigate the source of the change and decide whether or not to change the
+tuning parmeters. At IU we have begun work on such a monitoring framework. As a first step, we have developed
+methodologies to systematically diagnose network irregularities such as asymmetric routing and MTU
+inconsistencies for a given path. Those have helped us achieve excellent performance for accessing Lustre
 files systems over the distance. Right now we are in the process of generalizing and automating our tests so
 that they can be easily deployed by system administrators and end users. The goal of this work is to
 streamline the process of establishing a remote Lustre mount and continuously monitoring it for performance.
