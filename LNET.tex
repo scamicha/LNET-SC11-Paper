@@ -33,7 +33,7 @@
 \alignauthor Stephen Simms\\
 	\affaddr{Indiana University}\\
 	\affaddr{Bloomington, IN 47408}\\
-	\email{ssimms@indiana.edu}
+	\email{ssimms@iu.edu}
 \alignauthor Eric Barton\\
         \affaddr{Whamcloud Inc.}\\
         \affaddr{Danville, CA 94526}\\
@@ -41,7 +41,7 @@
 \alignauthor Matthew Link\\
 	\affaddr{Indiana University}\\
 	\affaddr{Bloomington, IN 47408}\\
-	\email{mrlink@indiana.edu}		
+	\email{mrlink@iu.edu}		
 }
 
 \maketitle
@@ -125,15 +125,40 @@ demonstration and the particulars of the Lustre installation and software tools 
 \section{The Lustre Networking Protocol}\label{sec:LNET}
 
 The Lustre networking protocol (LNET) sits above the underlying network stack (e.g. TCP, IB, etc.) and
-mediates the communication between Lustre components such as clients, servers, and metadata servers. 
+mediates the communication between Lustre components such as clients, servers, and metadata servers.  Lustre
+clients and servers communicate using a set of layered networking abstractions.  The top level provides an RPC
+mechanism which is used to implement all Lustre communications.  This is layered over the Lustre Network
+abstraction which provides broadly the same semantics as Portals \cite{portalspec} across and between multiple
+underlying physical networks and protocols which are then abstracted by the LNET layer of network drivers (LNDs).
 
-{\bf COULD A MORE ACCOMPLISHED LNET EXPERT LIKE SIMMS, LIANG, OR BARTON ADD SOME MORE HERE?}
+Like Portals, the LNET application programming interface (API) combines the characteristics of both one-sided
+and two-sided communications through its "matching put" and "matching get" operations.  These operations allow
+a process to post buffers passively, specifying a portal number and matching criteria for active
+communications from a peer.  When such a peer posts a "put" to the process with the same portal number that
+satisfies the matching criteria, the payload data provided with the "put" is copied into a selected portion of
+the matching buffer.  Similarly when a peer posts a matching "get", selected contents of the matching buffer
+are copied back to the buffer the peer provided with the "get".
+
+The process posting can specify whether or not matching communications "consume" the buffer being posted to
+determine whether communication is two-sided or one-sided.  If the posted buffer is not consumed, multiple
+matching active communications will access the same locations within it, effectively implementing one-sided
+communications with selected peers.  Otherwise, successive matching active communications will access
+consecutive locations in the posted buffer until it is consumed entirely.  In this way, multiple buffers all
+posted to match and be consumed by the same "put" criteria implement a message queue for two-sided
+communications.
+
+The LND API abstracts the specific networks that LNET must run over.  It is extremely simple, consisting
+substantially only of a "send" and a "receive" function.  The "send" is used by LNET to pass message
+descriptors and optional payload buffers to the LND for delivery to the peer.  When the peer LND receives the
+message descriptor, it calls up into LNET to determine matching buffers.  LNET then calls "receive" here for
+transfer the payload data.  This allows an LND abstracting a physical network capable of it to RDMA the
+payload data directly between source and destination.
 
 \subsection{Lustre Remote Procedure Calls}
 
 The Lustre remote procedure call (RPC) mechanism allows one to send requests, receive and process requests,
 perform bulk data transfer, and provide for error recovery. The number of outstanding RPCs that a single
-client may submit to a single server is controlled by the Lustre tunable {\tt max\_rpcs\_in\_flight}. This is
+client may submit to a single target is controlled by the Lustre tunable {\tt max\_rpcs\_in\_flight}. This is
 a client-side setting and may be set on a per client basis. The default setting of {\tt max\_rpcs\_in\_flight}
 = 8 may be suitable for many data center environments where there is relatively low latency between the
 storage system and the clients it serves. However, in a WAN environment round-trip times (RTTs) tend to be
@@ -184,11 +209,9 @@ a LND network interface (NI). The {\tt credits} value determines the maximum num
 sends from a NI, while the {\tt peer\_credits} value determines the maximum number of concurrent sends from a
 NI to the same destination, or peer. By default {\tt credits} is set to 64 and {\tt peer\_credits} is set to
 8. This means that if a single client stripes files over more than 8 servers using 8 {\tt peer\_credits} it
-will exceed the number of allocated {\tt credits}. It should be noted that {\tt credits} and {\tt
-  peer\_credits} apply to sends only, while {\tt max\_rpcs\_in\_flight} apply to both sends in
-receives. Additionally, {\tt credits} and {\tt peer\_credits} are returned to their pool once the send is
-completed and ``on the wire'', while RPCs can be outstanding for a longer period of time as they are not
-retired until data hits the Lustre object storage target (OST).Due to these facts, one might expect
+will exceed the number of allocated {\tt credits}. Additionally, {\tt credits} and {\tt peer\_credits} can be
+returned to their pool more rapidly than RPCs, which can be outstanding for a longer period of time as they are not
+retired until data hits the Lustre object storage target (OST). Due to these facts, one might expect
 transactions to require a greater number of {\tt max\_rpcs\_in\_flight} than {\tt peer\_credits}.
  
 
@@ -439,15 +462,24 @@ fact, it appears that the {\it Lustre Operations Manual} was correct in stating 
   max\_rpcs\_in\_flight} had a maximum value of 32 at the time of writing for the Simms et al. work, but in
 subsequent releases of the Lustre software this maximum value must have been increased.
 
-Furthermore, we postulate that the key difference between the Simms et al. work and this study was the fact
-that the RTT between client and server was 19 ms compared to our 50.5 ms. For the longer latency links it
-appears that {\bf ....SHIT THIS DOESN'T MAKE SENSE TO ME ANYMORE! SHOULDN'T PEER\_CREDITS BE MORE EASILY
-  OVERRUN WHEN THE LATENCY IS SMALL?} {\tt credits} and {\tt peer\_credits} were somehow engineered into the
-LNET protocol in a far more integral way for release 1.8.XXXX than was seen in 1.4.7.1. We have confirmed with
-the authors that they did not tune {\tt credits} or {\tt peer\_credits} for their study, and the default
-values were used \cite{simmsprivate}. This is obviously a very significant change resulting in the fact that
-in order to achieve peak performance for a WAN file system in Lustre 1.8 series one must adjust {\it both}
-{\tt max\_rpcs\_in\_flight} and {\tt credits}/{\tt peer\_credits}.
+Another key difference between the Simms et al. work and this study was the fact
+that the RTT between client and server was 19 ms compared to our 50.5 ms. Simms et al. directly fit their data
+to empirically determine a coefficient governing the throughput. Their equation 1 is
+\begin{equation}
+\mathrm{Throughput = K \times Stripe Count \times RPCs.}
+\end{equation}
+A linear least squares fit to the data yielded a K value of 22.5 for a single stripe. By plugging in the link
+latency value of 19 ms into our equation \ref{eq:band} we see that the coefficient for the theoretical peak is
+actually 26.3. In fact, examination of figure 5 of Simms et al. \ref{simms2007} shows that the relationship
+between RPCs and throughput is not exactly linear, but begins to fall away from linear once {\tt
+  max\_rpcs\_in\_flight} > 8. A linear fit to the values with RPCs between 1 and 8 would also probably yield a
+K-value somewhat closer to the peak theoretical value of 26.3. We have confirmed with the authors that they
+did not tune {\tt credits} or {\tt peer\_credits} for their study, and the default values were used
+\cite{simmsprivate}. So it would seem that, at least for the single client to single server interaction, the
+Simms group suffered from the same issue with {\tt peer\_credits} we saw for the SRS demonstration. The
+comparison of our data to the Simms et al. data gives a clear indication that in order to achieve peak
+performance for a WAN file system in Lustre 1.8 series one must adjust {\it both} {\tt max\_rpcs\_in\_flight}
+and {\tt credits}/{\tt peer\_credits}.
 
 The question then arises, ``What are the optimum values for {\tt max\_rpcs\_in\_flight}, {\tt credits}, and
 {\tt peer\_credits} for a given system with a certain number of clients, servers, and a given latency and
@@ -503,25 +535,37 @@ that the optimal setting was a few times {\tt max\_rpcs\_in\_flight}.
 
 In this article we have explored the effects of Lustre and ksocklnd tunable parameters on the performance of a
 Lustre WAN deployment over a 100 Gbps network. Namely, the key parameters are {\tt max\_rpcs\_in\_flight},
-{\tt credits}, and {\tt peer\_credits} we found that a setting of {\tt peer\_credits}=64, {\tt credits}=2048,
-and {\tt max\_rpcs\_in\_flight} $\geq$ 64. We further discovered that for optimal throughput one should set
-the {\tt peer\_credits} value equal to or greater than {\tt max\_rpcs\_in\_flight}. We presume that if we had
-increased the value of {\tt peer\_credits} further we would have continued to see gains in
-throughput. Unfortunately, we were unable to conduct these tests due to the time limitations of the SRS
-demonstration.
+{\tt credits}, and {\tt peer\_credits}. We found that a setting of {\tt peer\_credits}=64, {\tt credits}=2048,
+and {\tt max\_rpcs\_in\_flight} $\geq$ 64 yielded the best results for the SRS demonstration. We further
+discovered that for optimal throughput one should set the {\tt peer\_credits} value equal to or greater than
+{\tt max\_rpcs\_in\_flight}. We presume that if we had increased the value of {\tt peer\_credits} further we
+would have continued to see gains in throughput. Unfortunately, we were unable to conduct these tests due to
+the time limitations of the SRS demonstration.
 
 Researchers and administrators of large Lustre installations that are deployed over networks with moderate to
 large latencies should consider the potential gains in performance that can be achieved by properly tuning
-these parameters.
+these parameters. Clearly there are great number of variables to consider when trying to determine the best
+settings of these values to achieve the best throughput, including the number of clients, number of OSS,
+number of OST per OSS, network bandwidth and latency, and client and server hardware specifications. In
+addition, Lustre performance on the LNET and file system level is heavily dependent on the underlying
+network performance. While it is possible to mask certain network effects by tuning the Lustre configuration,
+i.e. increasing the number of stripes to utilize more servers in parallel, ultimately a poorly performing network
+will make it impossible to achieve peak performance with Lustre. Unfortunately, 
 
-{\bf I KNOW THIS CONCLUSION IS WEAK, I'LL ADD SOME MORE TO IT TOMORROW}
+We have seen this in the past when extending Lustre file systems from the IU data center to remote sites such
+as the Pittsburgh Supercomputing Center (latency = 50 ms) or the NOAO data center in Tucson (latency = 75 ms). We
+have developed methodologies to systematically diagnose network irregularities such as asymmetric routing and
+MTU inconsistencies for a given path. Those have helped us achieve excellent performance for accessing Lustre
+files systems over the distance. Right now we are in the process of generalizing and automating our tests so
+that they can be easily deployed by system administrators and end users. The goal of this work is to
+streamline the process of establishing a remote Lustre mount and continuously monitoring it for performance.
   
 \section{Acknowledgements}
 
 The authors would like to thank the contributions of our collaborators and technical staff. The following
 staff at IU provided excellent support in the administration of the systems, testing applications,
 visualization, technical writing, and project management: Edward Balas, Janae Cummings, Kurt Seiffert, Daphne
-Siefert-Herron, Bill Sherman, Martin Swany, Jenett Tillotson, George Turner, Matt Allen, Nathan Heald and Josh Walgenbach. Internet2 provided network setup and support: Andrew Lee, Chris Robb, and Matthew Zekauskas. ESnet staff also provided setup and troubleshooting assistance: Evangelos Chaniotakis and Patrick Dorn.
+Siefert-Herron, Bill Sherman, Martin Swany, David Hancock, Jenett Tillotson, George Turner, Matt Allen, Nathan Heald and Josh Walgenbach. Internet2 provided network setup and support: Andrew Lee, Chris Robb, and Matthew Zekauskas. ESnet staff also provided setup and troubleshooting assistance: Evangelos Chaniotakis and Patrick Dorn.
 
 The following vendors provided loaner hardware to support this project: Brocade loaned all the server host
 adapters, two MLXe-16 100 Gbps switches, required Fibre Channel and Ethernet optics, and all the Twinax cables
