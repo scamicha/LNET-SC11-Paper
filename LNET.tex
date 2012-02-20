@@ -127,52 +127,93 @@ demonstration and the particulars of the Lustre installation and software tools 
 The Lustre networking protocol (LNET) sits above the underlying network stack (e.g. TCP, IB, etc.) and
 mediates the communication between Lustre components such as clients, servers, and metadata servers.  Lustre
 clients and servers communicate using a set of layered networking abstractions.  The top level provides an RPC
-mechanism which is used to implement all Lustre communications.  This is layered over the Lustre Network
+mechanism, which is used to implement all Lustre communications.  This is layered over the Lustre Network
 abstraction which provides broadly the same semantics as Portals \cite{portalspec} across and between multiple
 underlying physical networks and protocols which are then abstracted by the LNET layer of network drivers (LNDs).
 
+\subsection{LNET Application Programming Interface}
+
 Like Portals, the LNET application programming interface (API) combines the characteristics of both one-sided
 and two-sided communications through its "matching put" and "matching get" operations.  These operations allow
-a process to post buffers passively, specifying a portal number and matching criteria for active
-communications from a peer.  When such a peer posts a "put" to the process with the same portal number that
-satisfies the matching criteria, the payload data provided with the "put" is copied into a selected portion of
-the matching buffer.  Similarly when a peer posts a matching "get", selected contents of the matching buffer
-are copied back to the buffer the peer provided with the "get".
+a process to post buffers passively, specifying a portal number and criteria for matching active
+communications from a peer.  When such a peer initiates a "put" to the posting process on the same portal
+number that also satisfies the posted matching criteria, the payload data provided with the "put" is copied
+into a selected portion of the posted buffer.  Similarly when a peer posts a matching "get", selected contents
+of the posted buffer are copied back to the buffer the peer provided with the "get".
 
-The process posting can specify whether or not matching communications "consume" the buffer being posted to
-determine whether communication is two-sided or one-sided.  If the posted buffer is not consumed, multiple
-matching active communications will access the same locations within it, effectively implementing one-sided
-communications with selected peers.  Otherwise, successive matching active communications will access
-consecutive locations in the posted buffer until it is consumed entirely.  In this way, multiple buffers all
-posted to match and be consumed by the same "put" criteria implement a message queue for two-sided
-communications.
+The process posting a buffer to the network can specify whether or not matching communications should
+"consume" the buffer.  This determines whether communication is two-sided or one-sided.  Two-sided
+communication occurs when posted buffers are consumed by matching active communications.  Successive matching
+active communications will access consecutive locations in the posted buffer until it is consumed entirely.
+Multiple buffers all posted in this way to the same portal number with identical matching criteria thus
+implement a message queue since matching "put"s by any peer copies the "put" payload into the next free area
+in the set of posted buffers.  One-sided communications occurs if the posted buffer is not consumed since
+multiple matching active communications will access the same locations within it - i.e. the posting process
+has simply granted access to the buffer to selected peers.
 
-The LND API abstracts the specific networks that LNET must run over.  It is extremely simple, consisting
-substantially only of a "send" and a "receive" function.  The "send" is used by LNET to pass message
-descriptors and optional payload buffers to the LND for delivery to the peer.  When the peer LND receives the
-message descriptor, it calls up into LNET to determine matching buffers.  LNET then calls "receive" here for
-transfer the payload data.  This allows an LND abstracting a physical network capable of it to RDMA the
-payload data directly between source and destination.
+\subsection{LNET Network Driver}
+
+The LNET Network Driver (LND) API abstracts the specific networks that LNET must run over.  It is extremely
+simple, consisting substantially only of a "send" and a "receive" function.  The "send" is used by LNET to
+pass message descriptors and optional payload buffers to the LND for delivery to the peer.  When the peer LND
+receives the message descriptor, it calls up into LNET to find matching buffers.  LNET then calls the LND's
+"receive" procedure to transfer the payload data into the buffer it matched.
+
+LNDs abstracting a network capable only of streaming, such as TCP/IP simply concatenate the LNET message
+descriptor and the payload data.  A "put" is therefore delivered with a single message (i.e. 1/2 RTT) and an acknowledged "put", or a "get" requires a complete round trip.
+
+\begin{figure}
+\end{figure}
+
+LNDs abstracting a network capable of RDMA can, particularly for large payloads, trade the additional latency
+required in some cases to set up RDMA directly between peer payload buffers for the improved efficiency that
+zero-copy delivers.  This is particularly important on Lustre nodes with high valence - i.e. servers with many
+NICs serving many clients or, less usually, clients with many NICs connecting to many servers.  A "get"
+implemented with RDMA still only requires a complete round trip, since the RDMA destination buffer descriptors
+can be sent with the "get" LNET descriptor.  However a "put" implemented with RDMA requires one round trip to
+retrieve the destination buffer RDMA descriptors, for a total of 1.5 round-trip latencies and an acknowledged
+"put" requires a total of 2 complete round trips.
+
+\begin{figure}
+\end{figure}
 
 \subsection{Lustre Remote Procedure Calls}
 
 The Lustre remote procedure call (RPC) mechanism allows one to send requests, receive and process requests,
-perform bulk data transfer, and provide for error recovery. The number of outstanding RPCs that a single
-client may submit to a single target is controlled by the Lustre tunable {\tt max\_rpcs\_in\_flight}. This is
-a client-side setting and may be set on a per client basis. The default setting of {\tt max\_rpcs\_in\_flight}
-= 8 may be suitable for many data center environments where there is relatively low latency between the
-storage system and the clients it serves. However, in a WAN environment round-trip times (RTTs) tend to be
-much longer and in order to keep the maximum number of RPCs ``on the wire'' the {\tt max\_rpcs\_in\_flight} is
-typically increased. Though one might think that raising the ceiling on RPCs should always improve
-performance, the potential drawback lies in the fact that a single client can then consume more resources on a
-server, and at some point, if {\tt max\_rpcs\_in\_flight} are increased across all clients, the server may
-become overwhelmed. It should also be noted that the {\it Lustre Operations Manual} \cite{LustreManual2012}
-incorrectly states that the largest value {\tt max\_rpcs\_in\_flight} may take is 32, when, in fact, we tested
-values up to and including {\tt max\_rpcs\_in\_flight} = 256.
+perform bulk data transfer, and provide for error recovery. The Lustre RPC layer standardizes all lustre
+interprocess communications into RPCs.  These consists of a request, an optional bulk transfer and a
+reply. The request is sent using two-sided communications as described above.  Prior to sending the RPC
+request, the client must have posted reply buffer and, optionally, its bulk buffers with unique matching
+criteria.  These criteria are used for one-sided communication under the control of the server, which uses
+them to "put" (on a read RPC) or "get" (on a write RPC) the bulk data if there is any, and to "put" the RPC
+reply.
+
+Note that the server uses an acked "put" for reads to ensure that the bulk data was successfully transferred
+to the client before it "put"s back the RPC reply.  A bulk RPC therefore requires 2 complete round-trips on a
+non RDMA capable network such as TCP/IP - 1/2 for the RPC request, 1 for the bulk data and 1/2 for the RPC
+reply.
+
+Note that the RPC request is the only unsolicited message anwhere in the Lustre protocol.  All other
+communication is one-sided and controlled by the server.  Since RPC requests are relatively small, buffering
+required to ensure servers are always eager readers is moderate and the vast bulk of network load can be
+controlled by the server to ensure networks remain free of congestion.
+
+The number of outstanding RPCs that a single client may submit to a single target is controlled by the
+Lustre tunable {\tt max\_rpcs\_in\_flight}. This is a client-side setting and may be set on a per client
+basis. The default setting of {\tt max\_rpcs\_in\_flight} = 8 may be suitable for many data center
+environments where there is relatively low latency between the storage system and the clients it
+serves. However, in a WAN environment round-trip times (RTTs) tend to be much longer and in order to keep the
+maximum number of RPCs ``on the wire'' the {\tt max\_rpcs\_in\_flight} is typically increased. Though one
+might think that raising the ceiling on RPCs should always improve performance, the potential drawback lies in
+the fact that a single client can then consume more resources on a server, and at some point, if {\tt
+  max\_rpcs\_in\_flight} are increased across all clients, the server may become overwhelmed. It should also
+be noted that the {\it Lustre Operations Manual} \cite{LustreManual2012} incorrectly states that the largest
+value {\tt max\_rpcs\_in\_flight} may take is 32, when, in fact, we tested values up to and including {\tt
+  max\_rpcs\_in\_flight} = 256.
 
 We are mainly concerned with sends, receives, and bulk transfers because our LNET testing focused on bulk
 operations. In Lustre a bulk transfer operation requires one RPCs to complete. The RPC request for a write
-from the client to the server works as follows {\bf EXPLANATION FROM BARTON}. So then, the maximum data
+from the client to the server works as described previously in this section. So then, the maximum data
 transfer rate for a single RPC is equal to the volume of the data transferred, i.e. the block size, divided by
 two times the RTT of the network link. Thus the peak throughput for a given number of RPCs is
 \begin{equation}
@@ -199,9 +240,6 @@ the SRS demonstration, with a 50.5 ms RTT and 1 MB block size, slightly more tha
 
 If one uses ksocklnd for the communication between Lustre network devices (LNDs) further tuning parameters
 governing the amount of data ``on the wire'' are available within the ksocklnd module. The key parameters in
-
-{\bf THIS NEEDS SOME INTRODUCTION ABOUT WHAT ksocklnd actually is.... Barton, Simms?}
-
 the case of the SRS demonstration, which we present results for in section \ref{sec:results}, were 
 {\tt credits} and {\tt peer\_credits}. While the {\tt max\_rpcs\_in\_flight} parameter is applicable at a higher
 layer, {\tt credits} and {\tt peer\_credits} control the number of messages that can be concurrently sent over
