@@ -56,7 +56,7 @@
   series of benchmarks and tests were undertaken. These included low level iperf network tests, Lustre
   networking (LNET) tests, file system tests with the IOR benchmark, and a suite of real-world applications reading
   and writing to the file system. All of the tests and benchmarks were run over a the WAN link with a latency
-  of 50.5 ms. In this article we describe the configuration and constraints of the demonstration and focuses in
+  of 50.5 ms. In this article we describe the configuration and constraints of the demonstration and focus in
   on the key findings and discoveries made regarding the Lustre networking layer for this extremely high
   bandwidth and high latency connection. Of particular interest is the relationship between the {\tt peer\_credits}
   and {\tt max\_rpcs\_in\_flight} settings when considering LNET performance.
@@ -84,8 +84,9 @@ applications over the 100 Gbps wide area network (WAN) spanning from Seattle, Wa
 Indiana, a distance in excess of 3,500 km (2,175 mi). A diagram of the network and routing points is given in
 figure \ref{fig:network}. Such a use case is of obvious intrest for geographically distributed workflows; for
 example, when data sources, such as remote sensors are in locations very distant from computational resources
-used to analyze the data \cite{henschel2010}. Though the overall demonstration was ultimately successful, IU
-achieved the highest reported throughput (6.2 GB/s) with scientific applications running across the WAN, the
+used to analyze the data \cite{henschel2010}. The overall demonstration was ultimately successful, IU
+achieved the highest reported throughput (6.2 GB/s) with scientific applications running across the
+WAN. However, the applications and IOR benchmarks are described elsewhere \cite{henschel2012}, the
 focus of this article is the performance of and lessons learned about the Lustre networking layer, LNET.
 
 \begin{figure*}[t]
@@ -110,9 +111,9 @@ take. In addition to the fact that the time allotted to IU was fairly short, the
 Gbps link required some fine tuning of the routing elements between Seattle and Indianapolis to achieve an
 eventual uni-directional peak throughput of 96 Gbps on the TCP layer \cite{henschel2012}. Although some of the
 network issues were eventually resolved, the network was quite variable throughout the SC11 conference and we
-were never able to achieve full bi-directional throughput. In addition, the network phase of the
-troubleshooting consumed nearly half of the time allocated to IU, leaving approximately 10 hours for
-troubleshooting and gathering data on LNET, file system benchmarks, and the performance of scientific
+were never able to achieve full bi-directional throughput. In addition, the tuning of the network to achieve
+this throughput consumed nearly half of the time allocated to IU, leaving approximately 10 hours for
+demonstrations and gathering data with LNET, file system benchmarks, and the performance of scientific
 applications.
 
 This paper is structured as follows: Section \ref{sec:LNET} gives a brief technical overview of the LNET layer
@@ -131,88 +132,34 @@ mechanism, which is used to implement all Lustre communications.  This is layere
 abstraction which provides broadly the same semantics as Portals \cite{portalspec} across and between multiple
 underlying physical networks and protocols which are then abstracted by the LNET layer of network drivers (LNDs).
 
-\subsection{LNET Application Programming Interface}
-
-Like Portals, the LNET application programming interface (API) combines the characteristics of both one-sided
-and two-sided communications through its "matching put" and "matching get" operations.  These operations allow
-a process to post buffers passively, specifying a portal number and criteria for matching active
-communications from a peer.  When such a peer initiates a "put" to the posting process on the same portal
-number that also satisfies the posted matching criteria, the payload data provided with the "put" is copied
-into a selected portion of the posted buffer.  Similarly when a peer posts a matching "get", selected contents
-of the posted buffer are copied back to the buffer the peer provided with the "get".
-
-The process posting a buffer to the network can specify whether or not matching communications should
-"consume" the buffer.  This determines whether communication is two-sided or one-sided.  Two-sided
-communication occurs when posted buffers are consumed by matching active communications.  Successive matching
-active communications will access consecutive locations in the posted buffer until it is consumed entirely.
-Multiple buffers all posted in this way to the same portal number with identical matching criteria thus
-implement a message queue since matching "put"s by any peer copies the "put" payload into the next free area
-in the set of posted buffers.  One-sided communications occurs if the posted buffer is not consumed since
-multiple matching active communications will access the same locations within it - i.e. the posting process
-has simply granted access to the buffer to selected peers.
-
-\subsection{LNET Network Driver}
-
-The LNET Network Driver (LND) API abstracts the specific networks that LNET must run over.  It is extremely
-simple, consisting substantially only of a "send" and a "receive" function.  The "send" is used by LNET to
-pass message descriptors and optional payload buffers to the LND for delivery to the peer.  When the peer LND
-receives the message descriptor, it calls up into LNET to find matching buffers.  LNET then calls the LND's
-"receive" procedure to transfer the payload data into the buffer it matched.
-
-LNDs abstracting a network capable only of streaming, such as TCP/IP simply concatenate the LNET message
-descriptor and the payload data.  A "put" is therefore delivered with a single message (i.e. 1/2 RTT) and an acknowledged "put", or a "get" requires a complete round trip.
-
-\begin{figure}
-\end{figure}
-
-LNDs abstracting a network capable of RDMA can, particularly for large payloads, trade the additional latency
-required in some cases to set up RDMA directly between peer payload buffers for the improved efficiency that
-zero-copy delivers.  This is particularly important on Lustre nodes with high valence - i.e. servers with many
-NICs serving many clients or, less usually, clients with many NICs connecting to many servers.  A "get"
-implemented with RDMA still only requires a complete round trip, since the RDMA destination buffer descriptors
-can be sent with the "get" LNET descriptor.  However a "put" implemented with RDMA requires one round trip to
-retrieve the destination buffer RDMA descriptors, for a total of 1.5 round-trip latencies and an acknowledged
-"put" requires a total of 2 complete round trips.
-
-\begin{figure}
-\end{figure}
-
 \subsection{Lustre Remote Procedure Calls}
 
 The Lustre remote procedure call (RPC) mechanism allows one to send requests, receive and process requests,
-perform bulk data transfer, and provide for error recovery. The Lustre RPC layer standardizes all lustre
-interprocess communications into RPCs.  These consists of a request, an optional bulk transfer and a
-reply. The request is sent using two-sided communications as described above.  Prior to sending the RPC
-request, the client must have posted reply buffer and, optionally, its bulk buffers with unique matching
-criteria.  These criteria are used for one-sided communication under the control of the server, which uses
-them to "put" (on a read RPC) or "get" (on a write RPC) the bulk data if there is any, and to "put" the RPC
-reply.
+perform bulk data transfer, and provide for error recovery. The Lustre RPC layer standardizes all Lustre
+interprocess communications into RPCs. The request is sent using two-sided communications as described above.
+Prior to sending the RPC request, the client must have posted reply buffer and, optionally, its bulk buffers
+with unique matching criteria. Note that the server uses an acknowledged {\it put} for reads to ensure that
+the bulk data was successfully transferred to the client before it {\it put}s back the RPC reply.  A bulk RPC
+therefore requires 2 complete round-trips on a non remote direct memory access (RDMA) capable network such as
+TCP/IP - 1/2 for the RPC request, 1 for the bulk data and 1/2 for the RPC reply.
 
-Note that the server uses an acked "put" for reads to ensure that the bulk data was successfully transferred
-to the client before it "put"s back the RPC reply.  A bulk RPC therefore requires 2 complete round-trips on a
-non RDMA capable network such as TCP/IP - 1/2 for the RPC request, 1 for the bulk data and 1/2 for the RPC
-reply.
-
-Note that the RPC request is the only unsolicited message anwhere in the Lustre protocol.  All other
-communication is one-sided and controlled by the server.  Since RPC requests are relatively small, buffering
-required to ensure servers are always eager readers is moderate and the vast bulk of network load can be
-controlled by the server to ensure networks remain free of congestion.
-
-The number of outstanding RPCs that a single client may submit to a single target is controlled by the
-Lustre tunable {\tt max\_rpcs\_in\_flight}. This is a client-side setting and may be set on a per client
-basis. The default setting of {\tt max\_rpcs\_in\_flight} = 8 may be suitable for many data center
-environments where there is relatively low latency between the storage system and the clients it
-serves. However, in a WAN environment round-trip times (RTTs) tend to be much longer and in order to keep the
-maximum number of RPCs ``on the wire'' the {\tt max\_rpcs\_in\_flight} is typically increased. Though one
-might think that raising the ceiling on RPCs should always improve performance, the potential drawback lies in
-the fact that a single client can then consume more resources on a server, and at some point, if {\tt
-  max\_rpcs\_in\_flight} are increased across all clients, the server may become overwhelmed. It should also
-be noted that the {\it Lustre Operations Manual} \cite{LustreManual2012} incorrectly states that the largest
-value {\tt max\_rpcs\_in\_flight} may take is 32, when, in fact, we tested values up to and including {\tt
-  max\_rpcs\_in\_flight} = 256.
+The number of outstanding RPCs that a single client may submit to a single target is controlled by the Lustre
+tunable {\tt max\_rpcs\_in\_flight}. This is a client-side setting and may be set on a per target basis. The
+default setting of {\tt max\_rpcs\_in\_flight} = 8 may be suitable for many data center environments where
+there is relatively low latency between the storage system and the clients it serves. However, in a WAN
+environment round-trip times (RTTs) tend to be much longer and in order to keep the maximum number of RPCs
+``on the wire'' the {\tt max\_rpcs\_in\_flight} is typically increased. Though one might think that raising
+the ceiling on RPCs should always improve performance, the potential drawback lies in the fact that a single
+client can then consume more resources on a server, and at some point, if {\tt max\_rpcs\_in\_flight} are
+increased across all clients, the service threads on the server may be used up, at which point client requests
+would wait until service threads were freed. The service thread mechanism insures that the transfers and
+requests are controlled by the server, eliminating the possibility of it being overwhelmed with requests.  It
+should also be noted that the {\it Lustre Operations Manual} \cite{LustreManual2012} incorrectly states that
+the largest value {\tt max\_rpcs\_in\_flight} may take is 32, when, in fact, we tested values up to and
+including {\tt max\_rpcs\_in\_flight} = 256.
 
 We are mainly concerned with sends, receives, and bulk transfers because our LNET testing focused on bulk
-operations. In Lustre a bulk transfer operation requires one RPCs to complete. The RPC request for a write
+operations. In Lustre a bulk transfer operation requires one RPC to complete. The RPC request for a write
 from the client to the server works as described previously in this section. So then, the maximum data
 transfer rate for a single RPC is equal to the volume of the data transferred, i.e. the block size, divided by
 two times the RTT of the network link. Thus the peak throughput for a given number of RPCs is
@@ -249,7 +196,10 @@ NI to the same destination, or peer. By default {\tt credits} is set to 64 and {
 8. This means that if a single client stripes files over more than 8 servers using 8 {\tt peer\_credits} it
 will exceed the number of allocated {\tt credits}. Additionally, {\tt credits} and {\tt peer\_credits} can be
 returned to their pool more rapidly than RPCs, which can be outstanding for a longer period of time as they are not
-retired until data hits the Lustre object storage target (OST). Due to these facts, one might expect
+retired until data hits the Lustre object storage target (OST). This is particularly true if one uses the
+default Lustre {\tt zero\_copy} setting of on. With {\tt zero\_copy} on, credits are not returned to the pool
+until the data is fully sent and an acknowledgement is received. The {\tt peer\_credits} and {\tt credits}
+settings apply to both the clients and the servers. Due to these facts, one might expect
 transactions to require a greater number of {\tt max\_rpcs\_in\_flight} than {\tt peer\_credits}.
  
 
@@ -264,13 +214,14 @@ set up and configuration that was applied for the demonstration.
 
 \subsection{Hardware}\label{sec:hardware}
 
-Figure \ref{fig:hardwaresetup} shows the final hardware configuration that was used for the SRS demonstration. IBM provided 31 servers that functioned as compute nodes as well as the 16 storage servers that
-were attached to the DataDirect Networks (DDN) storage devices. Brocade and Ciena provided the routing
-equipment that enabled the network link from the show floor to Indianapolis.
+Figure \ref{fig:hardwaresetup} shows the final hardware configuration that was used for the SRS
+demonstration. Each site was equipped with 31 IBM servers that functioned as compute nodes as well as 16
+storage servers that were attached to DataDirect Networks (DDN) storage devices. Brocade and Ciena provided
+the routing equipment that enabled the network link from the show floor to Indianapolis.
 
 The configurations of the compute cluster, storage, and networking components were identical in both
 Indianapolis and Seattle. The central networking component at each endpoint was a Brocade MLXe-16 router that
-provided a 100 Gbps Ethernet connection to the Ciena optical terminal managed by Internet2. The core router
+provided a 100 Gbps Ethernet connection to the Ciena optical terminal managed by Internet2. This core router
 also provided a 10 Gbps link to an IBM BNT G8264 OpenFlow enabled switch at each endpoint. The SRS
 demonstration comprised a OpenFlow component in addition to the main Lustre 100 Gbps demonstration. However,
 we will not discuss the OpenFlow component in this article. The 31 compute servers and 16 Lustre storage
@@ -281,19 +232,19 @@ The compute servers were IBM System x iDataPlex dx360 M3 systems, each configure
 6-core 2.40 GHz processors, 24 GB of DDR3 RAM, a Brocade 1860 adapter, and a 250 GB SATA hard drive. The
 object storage servers (OSS) were IBM System x iDataPlex dx360 M3 servers each configured with an Intel Xeon
 E5645 6-core 2.40 GHz processor, 48 GB of DDR3 RAM, a Brocade 1860 adapter, and a 1 TB SATA hard drive. The
-OSS nodes at each site were connected directly to a DDN SFA10000 via 8 Gb Fibre Channel (FC). The metadata
-server was identical to the compute servers, except it had 96 GB of RAM and was directly connected to a DDN
-EF3015 RAID system that contained twelve 300 GB 15K RPM SAS disk drives for Lustre metadata. Due to space
-constraints on the show floor server density was important. The throughput of the DDN SFA10000 allowed us to
-use a single storage system for the Lustre OSS nodes at each site.
+OSS nodes at each site were connected directly to a DDN SFA10000 via 8 Gb Fibre Channel (FC), which was
+populated with 300 2 TB SATA hard drives. The metadata server was identical to the compute servers, except it
+had 96 GB of RAM and was directly connected to a DDN EF3015 RAID system that contained twelve 300 GB 15K RPM
+SAS disk drives for Lustre metadata. Due to space constraints on the show floor server density was
+important. The throughput of the DDN SFA10000 allowed us to use a single storage system for the Lustre OSS
+nodes at each site.
 
 \begin{figure*}[t]
 \begin{center}
 \includegraphics[width=0.80\textwidth]{figures/hardware.png}
 \caption{Shown here is the hardware configuration used for the SRS demonstration. An IBM iDataPlex cluster and
-  Lustre file system were connected to a Brocade 100 Gpbs MLXe-16 router at each endpoint. The IBM routing
-  equipment connected to the Brocade routers was used for the OpenFlow component of the demonstration and is
-  not discussed in this article. }
+  Lustre file system were connected to a Brocade 100 Gpbs MLXe-16 router at each endpoint, one in Seattle and
+  one in Indianapolis. The IBM routing equipment connected to the Brocade routers was used for the OpenFlow component of the demonstration and is not discussed in this article. }
 \label{fig:hardwaresetup}
 \end{center}
 \end{figure*}
@@ -301,7 +252,7 @@ use a single storage system for the Lustre OSS nodes at each site.
 \subsection{Network}\label{sec:network}
 
 Before shipping equipment to the show floor in Seattle the demonstration configuration was assembled in the IU
-machine room for testing.  There we performed tests with the two Brocade MLXe routers connected back to back
+data center for testing.  There we performed tests with the two Brocade MLXe routers connected back to back
 with the 100 Gbps connection spanning a few meters.  Local network tests across this connection showed a
 latency of 0.24 ms and maximum stable performance of 98 Gbps using TCP iperf \cite{iperf2012}.
 
@@ -318,12 +269,14 @@ Indianapolis. Initial TCP iperf tests showed good performance for two parallel s
 Gbps. However, when adding more iperf streams to the link, performance dropped and throughput become
 unstable. Working with Internet2, ESnet, and SCinet, we were able to tune several parts of the network and
 achieve a stable 80 Gbps throughput with TCP iperf. Following all of our modifications, we were able to put a
-stable 80 Gbps of TCP iperf traffic on the link by using 8 servers and clients. Unfortunately, adding another
-single 10 Gbps stream to either of the connections resulted in congestion and degraded performance. However,
-when oversubscribing the link by using all 30 compute nodes on each end, we were able to achieve a peak
-throughput of 96 Gbps. Another unfortunate outcome was that the tuning steps yielded a stable connection only
-in one direction, from Seattle to Indianapolis. We were never able to achieve similar results in the other
-direction, and due to time constraints, we focused our efforts on just one direction.
+stable 80 Gbps of TCP iperf traffic on the link by using 8 servers and clients. The routing behavior between
+Seattle and Indianapolis was such that the traffic was split across two 50 Gbps VLANs on the ESnet and
+Internet2 routers. Due to this setup, adding another single 10 Gbps stream to either of the connections
+resulted in congestion on one of the VLANs and degraded performance. However, when oversubscribing the link by
+using all 30 compute nodes on each end, we were able to achieve a peak throughput of 96 Gbps. Another
+unfortunate outcome was that the tuning steps yielded a stable connection only in one direction, from Seattle
+to Indianapolis. We were never able to achieve similar results in the other direction, and due to time
+constraints, we focused our efforts on just one direction.
 
 \lstset{language=Bash, caption=Tuning parameters for the network, label=TuningListing}
 \begin{lstlisting}
@@ -341,13 +294,13 @@ Listing \ref{TuningListing} shows the network tuning parameters that were set on
 
 \subsection{Software and Lustre Configuration}
 
-All of the clients and Lustre servers ran RedHat Enterprise Linux version XXXX. The Lustre servers used a
-patched kernel with Lustre version XXX, while the clients used the patchless client version of Lustre with
-version number XXX. Tests were conducted with the LNET self-test module that is part of the Lustre modules
+All of the clients and Lustre servers ran RedHat Enterprise Linux version 5.7. The Lustre servers used a
+patched kernel with Lustre version 1.8.6-wc, while the clients used the patchless client version of Lustre with
+version number 1.8.6-wc. Tests were conducted with the LNET self-test module that is part of the Lustre modules
 toolkit. The LNET self-test scripts used to collect measurements for the SRS demonstration are available on
-Github.com \cite{lstgithub2011}.
-
-{\bf SIMMS NEED SOME ADDITIONAL STUFF HERE. MAYBE SHOULD OUTLINE THE OST CONFIG HERE?}
+Github.com \cite{lstgithub2011}. The 300 hard drives in the DDN SFA10000 were grouped into 30 object storage
+targets (OSTs), each in a 8+2 RAID configuration. These OSTs were then distributed to the 16 OSS, giving 14
+OSS with 2 OSTs and 2 OSS with a single OST.
 
 \section{Results}\label{sec:results}
 
@@ -415,19 +368,19 @@ the results are improved over the previous settings, but even with 4 clients the
 
 Finally, we increased {\tt credits} and {\tt peer\_credits} to 2048 and 64, respectively. The results from
 these tests are shown in figure \ref{fig:64pc}. In this case we were able to achieve a peak of 1092 MB/s or
-87\% of the theoretical peak. We assume that the 2 and 4 client cases ran into some sort of TCP congestion for
+87\% of the theoretical peak. We postulate that the 2 and 4 client cases ran into some sort of TCP congestion for
 128 and more RPCs, which would account for the decreased performance for those RPC values.
 
-In order to explore the seemingly profound effect that the two credits settings have on throughput for RPCs
-greater than 8, we took a closer look at the simplest case: a single client and a single server. The single
-client results from figures \ref{fig:default}, \ref{fig:32pc}, and \ref{fig:64pc} are plotted side-by-side in
-figure \ref{fig:singleserver}. Based on equation \ref{eq:band} we calculated the maximum bandwidth that can
-be achieved given the {\tt max\_rpcs\_in\_flight}, the RTT of the link, and the block size.
-This peak bandwidth is also included in figure \ref{fig:singleserver} as a function of RPCs. One can see that
-for this simple case, where communication between client and server is most deterministic, the bandwidth
-achieved tracks the theoretical peak for RPCs up to the number of {\tt peer\_credits}. For RPC values greater
-than the number of {\tt peer\_credits} performance can continue to improve, but the rate of improvement
-rapidly diverges from the theoretical peak. 
+In order to explore the seemingly profound effect that both the {\tt peer\_credits} and {\tt credits} settings
+have on throughput for RPCs greater than 8, we took a closer look at the simplest case: a single client and a
+single server. The single client results from figures \ref{fig:default}, \ref{fig:32pc}, and \ref{fig:64pc}
+are plotted side-by-side in figure \ref{fig:singleserver}. Based on equation \ref{eq:band} we calculated the
+maximum bandwidth that can be achieved given the {\tt max\_rpcs\_in\_flight}, the RTT of the link, and the
+block size.  This peak bandwidth is also included in figure \ref{fig:singleserver} as a function of RPCs. One
+can see that for this simple case, where communication between client and server is most deterministic, the
+bandwidth achieved tracks the theoretical peak for RPCs up to the number of {\tt peer\_credits}. For RPC
+values greater than the number of {\tt peer\_credits} performance can continue to improve, but the rate of
+improvement rapidly diverges from the theoretical peak.
 
 \begin{figure}
 \centering
@@ -444,33 +397,34 @@ the self-tests were run in a 1:1 distribution. So, for these measurements 14 of 
 2 clients, while 2 servers only had a single client. One can notice a trend similar to those seen in the
 previous figures. Namely, as {\tt peer\_credits} are increased, the aggregate bandwidth achieved increases for
 higher RPC values. However, with the full 30 clients and 16 servers we were unable to saturate the 100 Gbps
-link for any combination of {\tt max\_rpcs\_in\_flight}, {\tt credits}, and {\tt peer\_credits} we tested. Since the {\tt max\_rpcs\_in\_flight} parameter is set on a per client basis, one can
-calculate the theoretical peak throughput by multiplying equation \ref{eq:band} by the number of clients; in
-this case 30. Theoretical peak values are included in as a dashed line in figure \ref{fig:allserver}, and are
-based solely on the total number of RPCs without taking the physical limitation of the link into
-account. Given that we were able to achieve the theoretical throughput for a single client and server, it is
-difficult to say why the throughput values were so much smaller than the peak theoretical values for RPCs
-greater than 8, even when {\tt peer\_credit} were set to 64. We hypothesize that the culprit could be TCP
-congestion, or some dynamic VLAN switching on the part of the routers between the show floor and the IU data
-center. Another possibility is that the servers were unable to handle the load of multiple clients, we see
-this for {\tt max\_rpcs\_in\_flight} $>$ 64 in the single server data presented in figures \ref{fig:32pc} and \ref{fig:64pc}.  
+link for any combination of {\tt max\_rpcs\_in\_flight}, {\tt credits}, and {\tt peer\_credits} we
+tested. Since the {\tt max\_rpcs\_in\_flight} parameter is set on a per client basis, one can calculate the
+theoretical peak throughput by multiplying equation \ref{eq:band} by the number of clients; in this case
+30. Theoretical peak values are included in as a dashed line in figure \ref{fig:allserver}, and are based
+solely on the total number of RPCs without taking the physical limitation of the link into account. Given that
+we were able to achieve the theoretical throughput for a single client and server, it is difficult to say why
+the throughput values were so much smaller than the peak theoretical values for RPCs greater than 8, even when
+{\tt peer\_credit} were set to 64. We hypothesize that the culprit could be congestion, or some dynamic VLAN
+switching on the part of the routers between the show floor and the IU data center. Another possibility is
+that the servers were unable to handle the load of multiple clients, we see this for {\tt
+  max\_rpcs\_in\_flight} $>$ 64 in the single server data presented in figures \ref{fig:32pc} and
+\ref{fig:64pc}.
 
 \begin{figure}
 \centering
 \includegraphics[width=0.50\textwidth]{figures/all_pc_theory_plot.eps}
 \caption{A comparison of total system results of LNET self-test for 8, 32, and 64 {\tt
     peer\_credits}. The values of {\tt credits} were set according to the {\tt peer\_credit} values. The total
-system consisted of 30 clients and 16 servers. The dashed line indicated the peak theoretical throughput faor
+system consisted of 30 clients and 16 servers. The dashed line indicated the peak theoretical throughput for
 30 clients derived from equation \ref{eq:band}.}
 \label{fig:allserver}
 \end{figure}
 
-At any rate, the maximum throughput achieved using 30 clients and 16 servers was 7196 MB/s. Due to the routing
-behavior between Seattle and Indianapolis, the traffic was split across two 50 Gbps VLANs on the ESnet and
-Internet2 routers, we found that the maximum throughput could be achieved using the same number of clients and
-servers, using between eight to ten clients and servers. For the LNET self-test our best results were achieved
-with ten clients and ten servers, a LNET concurrency of 128, and a {\tt peer\_credits} setting of 64. With
-these settings we were able to achieve an aggregate throughput of 9450 MB/s, an efficiency of 76\%.
+At any rate, the maximum throughput achieved using 30 clients and 16 servers was 7196 MB/s. We found that the
+maximum throughput could be achieved using the same number of clients and servers, using between eight to ten
+clients and servers. For the LNET self-test our best results were achieved with ten clients and ten servers, a
+LNET concurrency of 128, and a {\tt peer\_credits} setting of 64. With these settings we were able to achieve
+an aggregate throughput of 9450 MB/s, an efficiency of 76\%.
 
 \section{Discussion}\label{sec:discussion} 
 
@@ -479,10 +433,10 @@ WAN, particularly for extremely high bandwidth links. Clearly, the default of 8 
   max\_rpcs\_in\_flight} setting is insufficient when mounting a Lustre filesystem over tens of milliseconds
 of latency on a 10 Gpbs network interface. However, it appears that increasing {\tt max\_rpcs\_in\_flight}
 alone is not sufficient to achieve peak performance. This is in contrast to the findings of Simms et
-al. \cite{simms2007} who were able to achieve performance above 700 MB/s when writing from a single 10 Gpbs
-client to several OSS. We were unable to find any peer-reviewed studies that were published on the effects of
-{\tt max\_rpcs\_in\_flight} on Lustre WAN performance besides the Simms et al. work, so we will focus our
-comparisons on that work.
+al. \cite{simms2007} who were able to achieve single-file performance above 700 MB/s when writing from a
+single 10 Gpbs client to several OSS. We were unable to find any peer-reviewed studies that were published on
+the effects of {\tt max\_rpcs\_in\_flight} on Lustre WAN performance besides the Simms et al. work, so we will
+focus our comparisons on that work.
 
 There are several key differences between this study and the one performed by Simms et al. Firstly, Simms'
 group was measuring the end-to-end performance of a production Lustre file system while the results presented
@@ -495,10 +449,9 @@ with the upper layers of the file system and actually writing data to disk. Seco
 for multiple clients communicating to a single server, while Simms et al. investigate a single client
 communicating with multiple servers. However, when looking at total throughput values, and assuming all
 clients and servers have 10 Gpbs network interfaces, these two cases can be considered to be roughly
-equivalent. Finally, the Simms study used Lustre version 1.4.7.1 while this study uses Lustre 1.8.XXXX. In
+equivalent. Finally, the Simms study used Lustre version 1.4.7.1 while this study uses Lustre 1.8.6-wc. In
 fact, it appears that the {\it Lustre Operations Manual} was correct in stating that {\tt
-  max\_rpcs\_in\_flight} had a maximum value of 32 at the time of writing for the Simms et al. work, but in
-subsequent releases of the Lustre software this maximum value must have been increased.
+  max\_rpcs\_in\_flight} had a maximum value of 32 at the time of writing for the Simms et al. work.
 
 Another key difference between the Simms et al. work and this study was the fact
 that the RTT between client and server was 19 ms compared to our 50.5 ms. Simms et al. directly fit their data
@@ -506,18 +459,21 @@ to empirically determine a coefficient governing the throughput. Their equation 
 \begin{equation}
 \mathrm{Throughput = K \times Stripe Count \times RPCs.}
 \end{equation}
-A linear least squares fit to the data yielded a K value of 22.5 for a single stripe. By plugging in the link
-latency value of 19 ms into our equation \ref{eq:band} we see that the coefficient for the theoretical peak is
-actually 26.3. In fact, examination of figure 5 of Simms et al. \cite{simms2007} shows that the relationship
-between RPCs and throughput is not exactly linear, but begins to fall away from linear once {\tt
-  max\_rpcs\_in\_flight} $>$ 8. A linear fit to the values with RPCs between 1 and 8 would also probably yield a
-K-value somewhat closer to the peak theoretical value of 26.3. We have confirmed with the authors that they
-did not tune {\tt credits} or {\tt peer\_credits} for their study, and the default values were used
-\cite{simmsprivate}. So it would seem that, at least for the single client to single server interaction, the
-Simms group suffered from the same issue with {\tt peer\_credits} we saw for the SRS demonstration. The
-comparison of our data to the Simms et al. data gives a clear indication that in order to achieve peak
-performance for a WAN file system in Lustre 1.8 series one must adjust {\it both} {\tt max\_rpcs\_in\_flight}
-and {\tt credits}/{\tt peer\_credits}.
+A linear least squares fit to the data yielded a K value of 22.5 for a single stripe. By inserting the link
+latency of 19 ms from the Simms work into our equation \ref{eq:band} we see that the coefficient for the
+theoretical peak is actually 26.3. In fact, examination of figure 5 of Simms et al. \cite{simms2007} shows
+that the relationship between RPCs and throughput is not exactly linear, but begins to fall away from linear
+once {\tt max\_rpcs\_in\_flight} $>$ 8. A linear fit to the values with RPCs between 1 and 8 would also
+probably yield a K-value somewhat closer to the peak theoretical value of 26.3. We have confirmed with the
+authors that they did not tune {\tt credits} or {\tt peer\_credits} for their study, and the default values
+were used \cite{simmsprivate}. So it would seem that, at least for the single client to single server
+interaction, the Simms group suffered from the same issue with {\tt peer\_credits} we saw for the SRS
+demonstration. In fact, though not shown in their figure 5, the Simms group collected data for up to 32
+RPCs. Although as RPCs were initially increased from 1 to 8 a nearly linear increase in throughput was
+realized, when increasing from 16 to 32 RPCs throughput only increased by 25\%, resulting in a significant
+flattening of the throughput curve \cite{simmsprivate}. The comparison of our data to the Simms et al. data
+gives a clear indication that in order to achieve peak performance for a WAN file system in Lustre 1.8 series
+one must adjust {\it both} {\tt max\_rpcs\_in\_flight} and {\tt credits}/{\tt peer\_credits}.
 
 The question then arises, ``What are the optimum values for {\tt max\_rpcs\_in\_flight}, {\tt credits}, and
 {\tt peer\_credits} for a given system with a certain number of clients, servers, and a given latency and
@@ -558,14 +514,15 @@ clients/servers the network interface will be communicating with.
 In closing, a few caveats should be mentioned. The data presented here were collected for a single system that
 was deployed, configured, tested, put into production, and torn down in less than a week. Throughout our
 testing time issues with the 100 Gbps network abounded. In fact, we were never able to achieve a reasonable
-throughput number for the network in the Indianapolis to Seattle direction. In addition, our the system we
+throughput number for the network in the Indianapolis to Seattle direction. In addition, the system we
 deployed was somewhat atypical for a Lustre file system in that it was deployed over a wide area network, it
 used 100 Gbps networking over the WAN, and it had a relatively small number of clients and servers. These
 facts however, taken singly or in aggregate, can not fully explain the trends we see in the data, so we are
 forced to conclude that for a WAN deployment of a Lustre file system {\tt max\_rpcs\_in\_flight}, {\tt
   credits}, and {\tt peer\_credits} play a crucial role in achieving maximum performance. One should also be
 aware of other parameters that may affect the throughput of the end-to-end filesystem. For example, the Lustre
-parameter {\tt max\_dirty\_mb} did not play any role in these tests as it does not affect LNET performance,
+parameter {\tt max\_dirty\_mb}, which controls the amount of dirty megabytes that can be written and queued up
+on the client, did not play any role in these tests as it does not affect LNET performance,
 but to achieve peak IOR performance it needed to be increased along with {\tt max\_rpcs\_in\_flight}. We found
 that the optimal setting was a few times {\tt max\_rpcs\_in\_flight}.
 
@@ -573,12 +530,11 @@ that the optimal setting was a few times {\tt max\_rpcs\_in\_flight}.
 
 In this article we have explored the effects of Lustre and ksocklnd tunable parameters on the performance of a
 Lustre WAN deployment over a 100 Gbps network. Namely, the key parameters are {\tt max\_rpcs\_in\_flight},
-{\tt credits}, and {\tt peer\_credits}. We found that a setting of {\tt peer\_credits}=64, {\tt credits}=2048,
-and {\tt max\_rpcs\_in\_flight} $\geq$ 64 yielded the best results for the SRS demonstration. We further
-discovered that for optimal throughput one should set the {\tt peer\_credits} value equal to or greater than
-{\tt max\_rpcs\_in\_flight}. We presume that if we had increased the value of {\tt peer\_credits} further we
-would have continued to see gains in throughput. Unfortunately, we were unable to conduct these tests due to
-the time limitations of the SRS demonstration.
+{\tt credits}, and {\tt peer\_credits}, and these must be tuned appropriately to match the network latency. We
+found that a setting of {\tt peer\_credits}=64, {\tt credits}=2048, and {\tt max\_rpcs\_in\_flight} $\geq$ 64
+yielded the best results for the SRS demonstration. We further discovered that for optimal throughput one
+should set the {\tt peer\_credits} value equal to or greater than {\tt max\_rpcs\_in\_flight}. Unfortunately,
+we were unable to conduct these tests due to the time limitations of the SRS demonstration.
 
 Researchers and administrators of large Lustre installations that are deployed over networks with moderate to
 large latencies should consider the potential gains in performance that can be achieved by properly tuning
@@ -593,8 +549,8 @@ variables can change over time, network performance can vary, OSS and OSTs may f
 out of service, and the number of clients writing from a cluster can vary with time. Therefore, in general, it
 is not possible to choose tuning values that will always deliver maximum performance with minimum system
 impact. We have experienced precisely this issue in the past when extending Lustre file systems from the IU
-data center to remote sites such as the Pittsburgh Supercomputing Center (latency = 50 ms) or the NOAO data
-center in Tucson (latency = 75 ms).
+data center to remote sites such as the Pittsburgh Supercomputing Center (RTT = 19 ms) or the NOAO data
+center in Tucson (RTT = 75 ms).
 
 Ultimately, the ideal solution to the tuning problem would be to include some sort of monitoring and tuning
 facility within the Lustre file system itself. This module could dynamically monitor the performance of the
